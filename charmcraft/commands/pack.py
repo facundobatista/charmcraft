@@ -83,6 +83,31 @@ class PackCommand(BaseCommand):
         # get the config files
         bundle_filepath = self.config.project.dirpath / 'bundle.yaml'
         bundle_config = load_yaml(bundle_filepath)
+
+        print("====== config", self.config)
+        # this comes from the config automatically, we're faking it because of the two FIXMEs
+        parts = {  # FIXME: this needs to be provided by the config itself (not the shortcut as it's today)
+            'parts': {
+                'bundle': {
+                    'plugin': 'bundle',   # FIXME: this "implicit" plugin needs to be handled by LifecycleManager
+                    'source': '.',  # FIXME: also to be handled implictly
+                    'prime': ['README.*'],
+                },
+            },
+        }
+        print("======== real parts", parts)
+
+        # this is new to this code
+        from craft_parts import plugins, LifecycleManager, Step
+        from craft_parts.plugins.v2.dump import DumpPlugin
+        plugins.register({"bundle": DumpPlugin})
+        dirpath = self.config.project.dirpath
+
+        # parts['parts']['bundle']['prime'].extend(str(dirpath / fname) for fname in MANDATORY_FILES)
+        parts['parts']['bundle']['prime'].append('bundle.yaml')  # FIXME: we need to do ^ but leaving relative paths
+        print("======== fixed parts", parts)
+
+        # these are all verifications that are agnostic to LifecycleMAnager
         if bundle_config is None:
             raise CommandError(
                 "Missing or invalid main bundle file: '{}'.".format(bundle_filepath))
@@ -97,8 +122,37 @@ class PackCommand(BaseCommand):
             raise CommandError(
                 "Bad config: 'type' field in charmcraft.yaml must be 'bundle' for this command.")
 
-        # pack everything
-        paths = get_paths_to_include(self.config)
+        # pack everything (new code!!!)
+        lf = LifecycleManager(parts, application_name="charmcraft", project_name="crazy-prototype")
+        lf.update()
+        actions = lf.plan(Step.PRIME)  # , part_names)
+
+        print("Planned actions:")
+        for action in actions:
+            print("====== planned action", action)
+
+        print("\nExecution:")
+        with lf.execution_context() as ctx:
+            for action in actions:
+                print("====== executing action", action)
+                ctx.execute(action)
+        print("========== DONE")
+
         zipname = self.config.project.dirpath / (bundle_name + '.zip')
-        build_zip(zipname, self.config.project.dirpath, paths)
+        zipfh = zipfile.ZipFile(zipname, 'w', zipfile.ZIP_DEFLATED)
+
+        import os
+        import pathlib
+
+        # FIXME: we should do better than harcoding "./prime"
+        buildpath = pathlib.Path('./prime')
+
+        # FIXME: what about symlinks????
+        buildpath_str = str(buildpath)  # os.walk does not support pathlib in 3.5
+        for dirpath, dirnames, filenames in os.walk(buildpath_str, followlinks=True):
+            dirpath = pathlib.Path(dirpath)
+            for filename in filenames:
+                filepath = dirpath / filename
+                zipfh.write(str(filepath), str(filepath.relative_to(buildpath)))
+        zipfh.close()
         logger.info("Created '%s'.", zipname)
