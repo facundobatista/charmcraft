@@ -25,6 +25,8 @@ import subprocess
 import zipfile
 
 import yaml
+from craft_providers import Image
+from craft_providers.lxd import LXDProvider
 
 from charmcraft.cmdbase import BaseCommand, CommandError
 from charmcraft.jujuignore import JujuIgnore, default_juju_ignore
@@ -366,6 +368,23 @@ See `charmcraft init` to create a template charm directory structure.
 """
 
 
+class CharmcraftBase(Image):
+    def setup(self, executor):
+        # FIXME: this should NOT always install latest charmcraft from PyPI, but:
+        # - if "outside charmcraft" is installed from PyPI, install it from PyPI
+        # - if "outside charmcraft" is installed from snap, install it from snap
+        # in both cases, the version to install should match the external one
+        # HINT: for snap case, in snapcraft:
+        #    https://github.com/cjp256/snapcraft/blob/wip-craft-providers/snapcraft/cli/providers.py#L116  # NOQA
+        executor.execute_run(['apt', 'update'], check=True)
+        executor.execute_run(['apt', 'install', '--yes', 'python3-pip'], check=True)
+        executor.execute_run(['pip3', 'install', 'charmcraft'], check=True)
+
+    def wait_until_ready(self, **kwargs):
+        # FIXME: need to code this; let's check what BuilddImage does
+        pass
+
+
 class BuildCommand(BaseCommand):
     """Build the charm."""
 
@@ -394,5 +413,42 @@ class BuildCommand(BaseCommand):
         validator = Validator()
         args = validator.process(parsed_args)
         logger.debug("working arguments: %s", args)
-        builder = Builder(args)
-        builder.run()
+
+        if os.environ.get("INSIDE_CONTAINER"):
+            # we're inside the container!!
+            builder = Builder(args)
+            builder.run()
+        else:
+            # FIXME: the code below works with LXDProvider only, will need changes for
+            # MultipassProvider
+            # FIXME: we need to decide how the user will choose the provider
+            provider = LXDProvider()
+
+            if not provider.is_installed():
+                raise CommandError("ERROR, LXD not installed")
+
+            print("============ Creating build environment...")
+            base_configuration = CharmcraftBase(
+                name='testproviders-config', compatibility_tag=None)
+            instance = provider.create_instance(
+                image_configuration=base_configuration,
+                image_remote="ubuntu",
+                image_name="18.04",
+
+                # FIXME: "charmcraft-{charm_name}-{base_series_arch_whatever}"
+                name="testproviders-bionic",
+
+                auto_clean=False,
+                project='default',
+                remote='local')
+
+            print("============ Mounting project")
+            # FIXME: this (and the code in Builder itself) will need some evolution for the
+            # case of "remote LXD", as "mount" doesn't work (we'd need to push the project and
+            # then pull the result)
+            instance.mount(host_source=args['from'], target=pathlib.Path("/root/project"))
+
+            build_cmd = ["charmcraft", "--verbose", "build"]
+            instance.execute_run(
+                build_cmd, check=True, env={"INSIDE_CONTAINER": "1"}, cwd="/root/project")
+            # FIXME: need to umount
