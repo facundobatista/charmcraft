@@ -784,10 +784,10 @@ def test_status_simple_ok(caplog, store_mock, config):
     caplog.set_level(logging.INFO, logger="charmcraft.commands")
 
     channel_map = [
-        Release(revision=7, channel='latest/stable', expires_at=None),
-        Release(revision=7, channel='latest/candidate', expires_at=None),
-        Release(revision=80, channel='latest/beta', expires_at=None),
-        Release(revision=156, channel='latest/edge', expires_at=None),
+        Release(revision=7, channel='latest/stable', expires_at=None, resources=[]),
+        Release(revision=7, channel='latest/candidate', expires_at=None, resources=[]),
+        Release(revision=80, channel='latest/beta', expires_at=None, resources=[]),
+        Release(revision=156, channel='latest/edge', expires_at=None, resources=[]),
     ]
     channels = _build_channels()
     revisions = [
@@ -831,8 +831,8 @@ def test_status_channels_not_released_with_fallback(caplog, store_mock, config):
     caplog.set_level(logging.INFO, logger="charmcraft.commands")
 
     channel_map = [
-        Release(revision=7, channel='latest/stable', expires_at=None),
-        Release(revision=80, channel='latest/edge', expires_at=None),
+        Release(revision=7, channel='latest/stable', expires_at=None, resources=[]),
+        Release(revision=80, channel='latest/edge', expires_at=None, resources=[]),
     ]
     channels = _build_channels()
     revisions = [
@@ -863,8 +863,8 @@ def test_status_channels_not_released_without_fallback(caplog, store_mock, confi
     caplog.set_level(logging.INFO, logger="charmcraft.commands")
 
     channel_map = [
-        Release(revision=5, channel='latest/beta', expires_at=None),
-        Release(revision=12, channel='latest/edge', expires_at=None),
+        Release(revision=5, channel='latest/beta', expires_at=None, resources=[]),
+        Release(revision=12, channel='latest/edge', expires_at=None, resources=[]),
     ]
     channels = _build_channels()
     revisions = [
@@ -895,8 +895,8 @@ def test_status_multiple_tracks(caplog, store_mock, config):
     caplog.set_level(logging.INFO, logger="charmcraft.commands")
 
     channel_map = [
-        Release(revision=503, channel='latest/stable', expires_at=None),
-        Release(revision=1, channel='2.0/edge', expires_at=None),
+        Release(revision=503, channel='latest/stable', expires_at=None, resources=[]),
+        Release(revision=1, channel='2.0/edge', expires_at=None, resources=[]),
     ]
     channels_latest = _build_channels()
     channels_track = _build_channels(track='2.0')
@@ -933,10 +933,10 @@ def test_status_tracks_order(caplog, store_mock, config):
     caplog.set_level(logging.INFO, logger="charmcraft.commands")
 
     channel_map = [
-        Release(revision=1, channel='latest/edge', expires_at=None),
-        Release(revision=2, channel='aaa/edge', expires_at=None),
-        Release(revision=3, channel='2.0/edge', expires_at=None),
-        Release(revision=4, channel='zzz/edge', expires_at=None),
+        Release(revision=1, channel='latest/edge', expires_at=None, resources=[]),
+        Release(revision=2, channel='aaa/edge', expires_at=None, resources=[]),
+        Release(revision=3, channel='2.0/edge', expires_at=None, resources=[]),
+        Release(revision=4, channel='zzz/edge', expires_at=None, resources=[]),
     ]
     channels_latest = _build_channels()
     channels_track_1 = _build_channels(track='zzz')
@@ -986,8 +986,10 @@ def test_status_with_one_branch(caplog, store_mock, config):
 
     tstamp_with_timezone = dateutil.parser.parse('2020-07-03T20:30:40Z')
     channel_map = [
-        Release(revision=5, channel='latest/beta', expires_at=None),
-        Release(revision=12, channel='latest/beta/mybranch', expires_at=tstamp_with_timezone),
+        Release(revision=5, channel='latest/beta', expires_at=None, resources=[]),
+        Release(
+            revision=12, channel='latest/beta/mybranch',
+            expires_at=tstamp_with_timezone, resources=[]),
     ]
     channels = _build_channels()
     channels.append(
@@ -1022,11 +1024,11 @@ def test_status_with_multiple_branches(caplog, store_mock, config):
     """Support having multiple branches."""
     caplog.set_level(logging.INFO, logger="charmcraft.commands")
 
-    tstamp_with_timezone = dateutil.parser.parse('2020-07-03T20:30:40Z')
+    tstamp = dateutil.parser.parse('2020-07-03T20:30:40Z')
     channel_map = [
-        Release(revision=5, channel='latest/beta', expires_at=None),
-        Release(revision=12, channel='latest/beta/branch-1', expires_at=tstamp_with_timezone),
-        Release(revision=15, channel='latest/beta/branch-2', expires_at=tstamp_with_timezone),
+        Release(revision=5, channel='latest/beta', expires_at=None, resources=[]),
+        Release(revision=12, channel='latest/beta/branch-1', expires_at=tstamp, resources=[]),
+        Release(revision=15, channel='latest/beta/branch-2', expires_at=tstamp, resources=[]),
     ]
     channels = _build_channels()
     channels.extend([
@@ -1059,6 +1061,73 @@ def test_status_with_multiple_branches(caplog, store_mock, config):
         "         edge           ↑          ↑",
         "         beta/branch-1  ver.12     12          2020-07-03T20:30:40+00:00",
         "         beta/branch-2  15.0.0     15          2020-07-03T20:30:40+00:00",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+def test_status_with_resources(caplog, store_mock, config):
+    """Support having multiple branches."""
+    caplog.set_level(logging.INFO, logger="charmcraft.commands")
+
+    res1 = Resource(name='resource1', optional=True, revision=1, resource_type='file')
+    res2 = Resource(name='resource2', optional=True, revision=54, resource_type='file')
+    channel_map = [
+        Release(revision=5, channel='latest/candidate', expires_at=None, resources=[res1, res2]),
+        Release(revision=5, channel='latest/beta', expires_at=None, resources=[res1]),
+    ]
+    channels = _build_channels()
+    revisions = [
+        _build_revision(revno=5, version='5.1'),
+    ]
+    store_mock.list_releases.return_value = (channel_map, channels, revisions)
+
+    args = Namespace(name='testcharm')
+    StatusCommand('group', config).run(args)
+
+    expected = [
+        "Track    Channel    Version    Revision    Resources",
+        "latest   stable     -          -           -",
+        "         candidate  5.1        5           resource1 (r1), resource2 (r54)",
+        "         beta       5.1        5           resource1 (r1)",
+        "         edge       ↑          ↑           ↑",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+def test_status_with_resources_and_branches(caplog, store_mock, config):
+    """Support having multiple branches."""
+    caplog.set_level(logging.INFO, logger="charmcraft.commands")
+
+    tstamp = dateutil.parser.parse('2020-07-03T20:30:40Z')
+    res1 = Resource(name='testres', optional=True, revision=1, resource_type='file')
+    res2 = Resource(name='testres', optional=True, revision=14, resource_type='file')
+    channel_map = [
+        Release(
+            revision=23, channel='latest/beta', expires_at=None, resources=[res2]),
+        Release(
+            revision=5, channel='latest/edge/mybranch', expires_at=tstamp, resources=[res1]),
+    ]
+    channels = _build_channels()
+    channels.append(
+        Channel(
+            name='latest/edge/mybranch', fallback='latest/edge',
+            track='latest', risk='edge', branch='mybranch'))
+    revisions = [
+        _build_revision(revno=5, version='5.1'),
+        _build_revision(revno=23, version='7.0.0'),
+    ]
+    store_mock.list_releases.return_value = (channel_map, channels, revisions)
+
+    args = Namespace(name='testcharm')
+    StatusCommand('group', config).run(args)
+
+    expected = [
+        "Track    Channel        Version    Revision    Resources      Expires at",
+        "latest   stable         -          -           -",
+        "         candidate      -          -           -",
+        "         beta           7.0.0      23          testres (r14)",
+        "         edge           ↑          ↑           ↑",
+        "         edge/mybranch  5.1        5           testres (r1)   2020-07-03T20:30:40+00:00",
     ]
     assert expected == [rec.message for rec in caplog.records]
 
@@ -1105,6 +1174,34 @@ def test_createlib_name_from_metadata_problem(store_mock, config):
             "directory with metadata.yaml.")
 
 
+def test_createlib_name_contains_dash(caplog, store_mock, tmp_path, monkeypatch, config):
+    """'-' is valid in charm names but can't be imported"""
+    caplog.set_level(logging.INFO, logger="charmcraft.commands")
+    monkeypatch.chdir(tmp_path)
+
+    lib_id = 'test-example-lib-id'
+    store_mock.create_library_id.return_value = lib_id
+
+    args = Namespace(name='testlib')
+    with patch('charmcraft.commands.store.get_name_from_metadata') as mock:
+        mock.return_value = 'test-charm'
+        CreateLibCommand('group', config).run(args)
+
+    assert store_mock.mock_calls == [
+        call.create_library_id('test-charm', 'testlib'),
+    ]
+    expected = [
+        "Library charms.test_charm.v0.testlib created with id test-example-lib-id.",
+        "Consider 'git add lib/charms/test_charm/v0/testlib.py'.",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+    created_lib_file = tmp_path / 'lib' / 'charms' / 'test_charm' / 'v0' / 'testlib.py'
+
+    env = get_templates_environment('charmlibs')
+    expected_newlib_content = env.get_template('new_library.py.j2').render(lib_id=lib_id)
+    assert created_lib_file.read_text() == expected_newlib_content
+
+
 @pytest.mark.parametrize('lib_name', [
     'foo.bar',
     'foo/bar',
@@ -1135,12 +1232,12 @@ def test_createlib_path_already_there(tmp_path, monkeypatch, config):
             CreateLibCommand('group', config).run(args)
 
     assert str(err.value) == (
-        "This library already exists: lib/charms/test-charm-name/v0/testlib.py")
+        "This library already exists: lib/charms/test_charm_name/v0/testlib.py")
 
 
 def test_createlib_path_can_not_write(tmp_path, monkeypatch, store_mock, add_cleanup, config):
     """Disk error when trying to write the new lib (bad permissions, name too long, whatever)."""
-    lib_dir = tmp_path / 'lib' / 'charms' / 'test-charm-name' / 'v0'
+    lib_dir = tmp_path / 'lib' / 'charms' / 'test_charm_name' / 'v0'
     lib_dir.mkdir(parents=True)
     lib_dir.chmod(0o111)
     add_cleanup(lib_dir.chmod, 0o777)
@@ -1188,6 +1285,29 @@ def test_publishlib_simple(caplog, store_mock, tmp_path, monkeypatch, config):
     assert [expected] == [rec.message for rec in caplog.records]
 
 
+def test_publishlib_contains_dash(caplog, store_mock, tmp_path, monkeypatch, config):
+    """Happy path publishing because no revision at all in the Store."""
+    caplog.set_level(logging.INFO, logger="charmcraft.commands")
+    monkeypatch.chdir(tmp_path)
+
+    lib_id = 'test-example-lib-id'
+    content, content_hash = factory.create_lib_filepath(
+        'test-charm', 'testlib', api=0, patch=1, lib_id=lib_id)
+
+    store_mock.get_libraries_tips.return_value = {}
+    args = Namespace(library='charms.test_charm.v0.testlib')
+    with patch('charmcraft.commands.store.get_name_from_metadata') as mock:
+        mock.return_value = 'test-charm'
+        PublishLibCommand('group', config).run(args)
+
+    assert store_mock.mock_calls == [
+        call.get_libraries_tips([{'lib_id': lib_id, 'api': 0}]),
+        call.create_library_revision('test-charm', lib_id, 0, 1, content, content_hash),
+    ]
+    expected = "Library charms.test_charm.v0.testlib sent to the store with version 0.1"
+    assert [expected] == [rec.message for rec in caplog.records]
+
+
 def test_publishlib_all(caplog, store_mock, tmp_path, monkeypatch, config):
     """Publish all the libraries found in disk."""
     caplog.set_level(logging.DEBUG, logger="charmcraft.commands")
@@ -1219,15 +1339,15 @@ def test_publishlib_all(caplog, store_mock, tmp_path, monkeypatch, config):
         call.create_library_revision('testcharm-1', 'lib_id_3', 1, 3, c3, h3),
     ]
     names = [
-        'charms.testcharm-1.v0.testlib-a',
-        'charms.testcharm-1.v0.testlib-b',
-        'charms.testcharm-1.v1.testlib-b',
+        'charms.testcharm_1.v0.testlib-a',
+        'charms.testcharm_1.v0.testlib-b',
+        'charms.testcharm_1.v1.testlib-b',
     ]
     expected = [
-        "Libraries found under lib/charms/testcharm-1: " + str(names),
-        "Library charms.testcharm-1.v0.testlib-a sent to the store with version 0.1",
-        "Library charms.testcharm-1.v0.testlib-b sent to the store with version 0.1",
-        "Library charms.testcharm-1.v1.testlib-b sent to the store with version 1.3",
+        "Libraries found under lib/charms/testcharm_1: " + str(names),
+        "Library charms.testcharm_1.v0.testlib-a sent to the store with version 0.1",
+        "Library charms.testcharm_1.v0.testlib-b sent to the store with version 0.1",
+        "Library charms.testcharm_1.v1.testlib-b sent to the store with version 1.3",
     ]
     records = [rec.message for rec in caplog.records]
     assert all(e in records for e in expected)
@@ -1724,6 +1844,64 @@ def test_fetchlib_simple_downloaded(caplog, store_mock, tmp_path, monkeypatch, c
     assert [expected] == [rec.message for rec in caplog.records]
     saved_file = tmp_path / 'lib' / 'charms' / 'testcharm' / 'v0' / 'testlib.py'
     assert saved_file.read_text() == lib_content
+
+
+def test_fetchlib_simple_dash_in_name(caplog, store_mock, tmp_path, monkeypatch, config):
+    """Happy path fetching the lib for the first time (downloading it)."""
+    caplog.set_level(logging.INFO, logger="charmcraft.commands")
+    monkeypatch.chdir(tmp_path)
+
+    lib_id = 'test-example-lib-id'
+    lib_content = 'some test content with uñicode ;)'
+    store_mock.get_libraries_tips.return_value = {
+        (lib_id, 0): Library(
+            lib_id=lib_id, content=None, content_hash='abc', api=0, patch=7,
+            lib_name='testlib', charm_name='test-charm'),
+    }
+    store_mock.get_library.return_value = Library(
+        lib_id=lib_id, content=lib_content, content_hash='abc', api=0, patch=7,
+        lib_name='testlib', charm_name='test-charm')
+
+    FetchLibCommand('group', config).run(Namespace(library='charms.test_charm.v0.testlib'))
+
+    assert store_mock.mock_calls == [
+        call.get_libraries_tips(
+            [{'charm_name': 'test-charm', 'lib_name': 'testlib', 'api': 0}]),
+        call.get_library('test-charm', lib_id, 0),
+    ]
+    expected = "Library charms.test_charm.v0.testlib version 0.7 downloaded."
+    assert [expected] == [rec.message for rec in caplog.records]
+    saved_file = tmp_path / 'lib' / 'charms' / 'test_charm' / 'v0' / 'testlib.py'
+    assert saved_file.read_text() == lib_content
+
+
+def test_fetchlib_simple_dash_in_name_on_disk(caplog, store_mock, tmp_path, monkeypatch, config):
+    """Happy path fetching the lib for the first time (downloading it)."""
+    caplog.set_level(logging.INFO, logger="charmcraft.commands")
+    monkeypatch.chdir(tmp_path)
+
+    lib_id = 'test-example-lib-id'
+    lib_content = "test-content"
+    store_mock.get_libraries_tips.return_value = {
+        (lib_id, 0): Library(
+            lib_id=lib_id, content=None, content_hash='abc', api=0, patch=7,
+            lib_name='testlib', charm_name='test-charm'),
+    }
+    store_mock.get_library.return_value = Library(
+        lib_id=lib_id, content=lib_content, content_hash='abc', api=0, patch=7,
+        lib_name='testlib', charm_name='test-charm')
+    factory.create_lib_filepath(
+        'test-charm', 'testlib', api=0, patch=1, lib_id=lib_id)
+
+    FetchLibCommand('group', config).run(Namespace(library=None))
+
+    assert store_mock.mock_calls == [
+        call.get_libraries_tips(
+            [{'lib_id': 'test-example-lib-id', 'api': 0}]),
+        call.get_library('test-charm', lib_id, 0),
+    ]
+    expected = "Library charms.test_charm.v0.testlib updated to version 0.7."
+    assert [expected] == [rec.message for rec in caplog.records]
 
 
 def test_fetchlib_simple_updated(caplog, store_mock, tmp_path, monkeypatch, config):
