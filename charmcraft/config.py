@@ -104,19 +104,6 @@ class CharmhubConfig:
         return cls(**source)
 
 
-class BasicPrime(tuple):
-    """Hold the list of files to include, specified under parts/bundle/prime configs.
-
-    This is a intermediate structure until we have the full Lifecycle in place.
-    """
-
-    @classmethod
-    def from_dict(cls, parts):
-        """Build from a dicts sequence."""
-        prime = parts.get('bundle', {}).get('prime', [])
-        return cls(prime)
-
-
 @attr.s(kw_only=True, frozen=True)
 class Project:
     """Configuration for all project-related options, used internally."""
@@ -130,7 +117,7 @@ class Config:
     """Root of all the configuration."""
 
     charmhub = attr.ib(default={}, converter=CharmhubConfig.from_dict)
-    parts = attr.ib(default={}, converter=BasicPrime.from_dict)
+    parts = attr.ib(default={}, converter=dict)
     type = attr.ib(default=None)
 
     # this item is provided by the code itself, not the user, as convenience for the
@@ -152,20 +139,6 @@ CONFIG_SCHEMA = {
         },
         'parts': {
             'type': 'object',
-            'properties': {
-                'bundle': {
-                    'type': 'object',
-                    'properties': {
-                        'prime': {
-                            'type': 'array',
-                            'items': {
-                                'type': 'string',
-                                'format': 'relative_path',
-                            },
-                        },
-                    },
-                },
-            },
         },
     },
     'required': ['type'],
