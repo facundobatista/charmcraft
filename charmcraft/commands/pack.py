@@ -21,6 +21,9 @@ import os
 import pathlib
 import zipfile
 
+from craft_parts import plugins, LifecycleManager, Step
+from craft_parts.plugins import PluginV2
+
 from charmcraft.cmdbase import BaseCommand, CommandError
 from charmcraft.utils import load_yaml
 
@@ -36,7 +39,7 @@ def build_zip(zippath, basedir):
     Note we convert all paths to str to support Python 3.5.
     """
     logger.debug("Building the zip file")
-    zipfh = zipfile.ZipFile(zipname, 'w', zipfile.ZIP_DEFLATED)
+    zipfh = zipfile.ZipFile(zippath, 'w', zipfile.ZIP_DEFLATED)
 
     # FIXME: what about symlinks????
     basedir_str = str(basedir)  # os.walk does not support pathlib in 3.5
@@ -46,6 +49,45 @@ def build_zip(zippath, basedir):
             filepath = dirpath / filename
             zipfh.write(str(filepath), str(filepath.relative_to(basedir)))
     zipfh.close()
+
+
+class PackPlugin(PluginV2):
+    """Copy the content from the part source."""
+
+    @classmethod
+    def get_schema(cls):
+        return {
+            "$schema": "http://json-schema.org/draft-04/schema#",
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {},
+            "required": ['source'],  # not from charmcraft.yaml, but injected below
+        }
+
+    def get_build_snaps(self):
+        # thie is the stuff we need to build that will be installed from snaps
+        return set()
+
+    def get_build_packages(self):
+        # this is the stuff we need to build that will be installed from apt
+        return set()
+
+    def get_build_environment(self):
+        # these are environment variables that will be set when running the "build commands"
+        return dict()
+
+    def get_build_commands(self):
+        # commands to run during the BUILD step; here our current working directory
+        # is 'parts/bundle/build', which has everything copied from where the 'source' key
+        # indicates
+        config = self._part_info.config
+        print("============ received config", config)
+        install_dir = self._part_info.part_install_dir
+
+        commands = [
+            'cp --archive --link --no-dereference . "{}"'.format(install_dir),
+        ]
+        return commands
 
 
 _overview = """
@@ -74,11 +116,8 @@ class PackCommand(BaseCommand):
         bundle_filepath = self.config.project.dirpath / 'bundle.yaml'
         bundle_config = load_yaml(bundle_filepath)
 
-        # this is new to this code
-        from craft_parts import plugins, LifecycleManager, Step  # FIXME: fix this, but getting stuff really from an installed project, not copied dir
-        from craft_parts.plugins.v2.dump import DumpPlugin
-        plugins.register({"bundle": DumpPlugin})
-        dirpath = self.config.project.dirpath
+        # let's register the Pack plugin
+        plugins.register({"bundle": PackPlugin})
 
         # these are all verifications that are agnostic to LifecycleMAnager
         if bundle_config is None:
@@ -97,16 +136,21 @@ class PackCommand(BaseCommand):
 
         # add mandatory files
         parts = self.config.parts.copy()
-        parts.setdefault('bundle', {}).setdefault('prime', []).extend(MANDATORY_FILES)
+        bundle_plugin = parts.setdefault('bundle', {})
+        bundle_plugin.setdefault('prime', []).extend(MANDATORY_FILES)
+
+        # set the source for building to the indicated project dir
+        bundle_plugin['source'] = str(self.config.project.dirpath)
 
         # pack everything (new code!!!)
         lf = LifecycleManager(
-            {'parts': parts}, application_name="charmcraft", project_name="crazy-prototype")
+            {'parts': parts}, application_name="charmcraft",
+            project_name="crazy-prototype", config=self.config)
         lf.update()
         actions = lf.plan(Step.PRIME)  # , part_names)
 
         logger.debug("Planned actions: %s", actions)
-        with lf.execution_context() as ctx:
+        with lf.action_executor() as ctx:
             for action in actions:
                 logger.debug("Executing action %s", action)
                 ctx.execute(action)

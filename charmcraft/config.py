@@ -139,6 +139,8 @@ CONFIG_SCHEMA = {
         },
         'parts': {
             'type': 'object',
+            # FIXME: we need to add a proper schema for all this "parts" (snapcraft 
+            # already has it)
         },
     },
     'required': ['type'],
