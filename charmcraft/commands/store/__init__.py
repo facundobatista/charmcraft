@@ -39,6 +39,7 @@ from charmcraft.utils import (
 )
 
 from .store import Store
+from .registry import ImageHandler
 
 logger = logging.getLogger('charmcraft.commands.store')
 
@@ -1094,6 +1095,20 @@ class ListResourcesCommand(BaseCommand):
             logger.info(line)
 
 
+def oci_image_spec(value):   # FIXME test!
+    """Build a full OCI image spec, using defaults for non specified parts."""
+    if '/' in value:
+        orga, value = value.split('/', 1)
+    else:
+        orga = 'library'
+    if ':' in value:
+        name, reference = value.split(':')
+    else:
+        name = value
+        reference = 'latest'
+    return (orga, name, reference)
+
+
 class UploadResourceCommand(BaseCommand):
     """Upload a resource to Charmhub."""
 
@@ -1106,8 +1121,16 @@ class UploadResourceCommand(BaseCommand):
         specified charm. This charm needs to have the resource declared
         in its metadata (in a preoviously uploaded to Charmhub revision).
 
-        to the packaging standard. This command will finish successfully
-        once the package is approved by Charmhub.
+        The resource can be a file from your computer (use the '--filepath'
+        option) or an OCI Image (use the '--image' option, including a
+        '--registry' indication if needed, for example use
+        'registry.hub.docker.com' for DockerHub, the default is
+        Canonical's registry).
+
+        The OCI image description uses the [organization/]name[:reference]
+        form. The name is mandatory but organization and reference (a digest
+        or a tag) are optional, defaulting to 'library' and 'latest'
+        correspondingly.
 
         Upload will take you through login if needed.
     """)
@@ -1122,14 +1145,41 @@ class UploadResourceCommand(BaseCommand):
             'resource_name', metavar='resource-name',
             help="The resource name")
         parser.add_argument(
-            '--filepath', type=SingleOptionEnsurer(useful_filepath), required=True,
+            '--filepath', type=SingleOptionEnsurer(useful_filepath), #required=True,
             help="The file path of the resource content to upload")
+
+        parser.add_argument(
+            '--registry', type=SingleOptionEnsurer(str),
+            help="The file path of the resource content to upload")
+        parser.add_argument(
+            '--image', type=SingleOptionEnsurer(oci_image_spec), required=True,
+            help="The image specification with the [organization/]name[:reference] form")
+        #FIXME: if registry is indicated, image MUST be there
+        #FIXME: image and filepath are mutually exclusive
 
     def run(self, parsed_args):
         """Run the command."""
         store = Store(self.config.charmhub)
+
+        if parsed_args.filepath:
+            resource_filepath = parsed_args.filepath
+            logger.debug("Uploading resource directly from file %s", resource_filepath)
+        elif parsed_args.image:
+            logger.debug(
+                "Uploading resource from image %r at %r", parsed_args.image, parsed_args.registry)
+            if parsed_args.registry is None:
+                # FIXME: really support a registry! if Canonical's one, do not move bytes
+                # and produce the final JSON directly
+                pass
+
+            ih = ImageHandler(parsed_args.image, parsed_args.registry)
+            ih.copy()
+            print("=============== FIXME quitting") #FIXME
+            return
+
         result = store.upload_resource(
-            parsed_args.charm_name, parsed_args.resource_name, parsed_args.filepath)
+            parsed_args.charm_name, parsed_args.resource_name, resource_filepath)
+
         if result.ok:
             logger.info(
                 "Revision %s created of resource %r for charm %r",
