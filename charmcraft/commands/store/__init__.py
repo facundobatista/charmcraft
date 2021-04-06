@@ -1144,18 +1144,24 @@ class UploadResourceCommand(BaseCommand):
         parser.add_argument(
             'resource_name', metavar='resource-name',
             help="The resource name")
-        parser.add_argument(
-            '--filepath', type=SingleOptionEnsurer(useful_filepath), #required=True,
+        group = parser.add_mutually_exclusive_group(required=True)
+        group.add_argument(
+            '--filepath', type=SingleOptionEnsurer(useful_filepath),
             help="The file path of the resource content to upload")
-
+        group.add_argument(
+            '--image', type=SingleOptionEnsurer(oci_image_spec),
+            help="The image specification with the [organization/]name[:reference] form")
         parser.add_argument(
             '--registry', type=SingleOptionEnsurer(str),
             help="The file path of the resource content to upload")
-        parser.add_argument(
-            '--image', type=SingleOptionEnsurer(oci_image_spec), required=True,
-            help="The image specification with the [organization/]name[:reference] form")
-        #FIXME: if registry is indicated, image MUST be there
-        #FIXME: image and filepath are mutually exclusive
+
+    def parsed_args_post_verification(self, parser, parsed_args):
+        """Verify any corner case that can not be expressed with argparse.
+
+        If --registry is given, --image must be present.
+        """
+        if parsed_args.registry is not None and parsed_args.image is None:
+            parser.error("argument --registry: not allowed without argument --image")
 
     def run(self, parsed_args):
         """Run the command."""
@@ -1172,8 +1178,9 @@ class UploadResourceCommand(BaseCommand):
                 # and produce the final JSON directly
                 pass
 
-            ih = ImageHandler(parsed_args.image, parsed_args.registry)
-            ih.copy()
+            (orga, name, reference) = parsed_args.image
+            ih = ImageHandler(parsed_args.registry, orga, name)
+            ih.copy(reference)
             print("=============== FIXME quitting") #FIXME
             return
 
