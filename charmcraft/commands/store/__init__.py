@@ -1173,14 +1173,13 @@ class UploadResourceCommand(BaseCommand):
         elif parsed_args.image:
             logger.debug(
                 "Uploading resource from image %r at %r", parsed_args.image, parsed_args.registry)
-            if parsed_args.registry is None:
-                # FIXME: really support a registry! if Canonical's one, do not move bytes
-                # and produce the final JSON directly
-                pass
-
             (orga, name, reference) = parsed_args.image
             ih = ImageHandler(parsed_args.registry, orga, name)
-            ih.copy(reference)
+            if parsed_args.registry is None:
+                final_resource_url = ih.get_destination_url(reference)
+            else:
+                final_resource_url = ih.copy(reference)
+            logger.debug("Resource URL: %s", final_resource_url)
             print("=============== FIXME quitting") #FIXME
             return
 

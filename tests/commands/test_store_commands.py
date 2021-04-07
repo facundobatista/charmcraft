@@ -717,7 +717,7 @@ def test_release_options_resource(config):
     assert isinstance(action.type, ResourceOption)
 
 
-@pytest.mark.parametrize('args_validation', [
+@pytest.mark.parametrize('sysargs,expected_parsed', [
     (['somename', '--channel=stable', '--revision=33'], ('somename', 33, ['stable'], [])),
     (['somename', '--channel=stable', '-r', '33'], ('somename', 33, ['stable'], [])),
     (['somename', '-c', 'stable', '--revision=33'], ('somename', 33, ['stable'], [])),
@@ -728,9 +728,8 @@ def test_release_options_resource(config):
     (['somename', '-c=beta', '-r=3', '--resource=foo:15', '--resource=bar:99'],
         ('somename', 3, ['beta'], [ResourceOption('foo', 15), ResourceOption('bar', 99)])),
 ])
-def test_release_parameters_ok(config, args_validation):
+def test_release_parameters_ok(config, sysargs, expected_parsed):
     """Control of different combination of sane parameters."""
-    sysargs, expected_parsed = args_validation #FIXME
     cmd = ReleaseCommand('group', config)
     parser = ArgumentParser()
     cmd.fill_parser(parser)
