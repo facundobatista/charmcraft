@@ -24,11 +24,10 @@ JSON_RELATED_MIMETYPES = {'application/json', MANIFEST_LISTS, MANIFEST_V2_MIMETY
 # downloads and uploads happen in chunks
 CHUNK_SIZE = 2 ** 20  # 65536
 
-# FIXME: change all "assert" for real check and ValueError raising
-
 
 def assert_response_ok(response, expected_status=200):
     """Asserts the response is ok."""
+    print("===== assert resp", response)
     if response.status_code != expected_status:
         if response.headers['Content-Type'] in JSON_RELATED_MIMETYPES:
             errors = response.json().get('errors')
@@ -38,6 +37,8 @@ def assert_response_ok(response, expected_status=200):
             "Wrong status code from server (expected={}, got={}) errors={} headers={}".format(
                 expected_status, response.status_code, errors, response.headers))
 
+    print("======= H!", repr(response.headers))
+    print("======= HCT?", repr(response.headers.get('Content-Type')))
     if response.headers.get('Content-Type') not in JSON_RELATED_MIMETYPES:
         return
 
@@ -96,7 +97,7 @@ class OCIRegistry:
             try:
                 auth_info = self._get_auth_info(response)
             except (ValueError, KeyError) as exc:
-                raise ValueError(
+                raise CommandError(
                     "Bad 401 response: {}; headers: {!r}".format(exc, response.headers))
             self.auth_token = self._authenticate(auth_info)
             headers['Authorization'] = 'Bearer {}'.format(self.auth_token)
