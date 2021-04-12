@@ -1169,6 +1169,7 @@ class UploadResourceCommand(BaseCommand):
 
         if parsed_args.filepath:
             resource_filepath = parsed_args.filepath
+            resource_type = 'file'
             logger.debug("Uploading resource directly from file %s", resource_filepath)
         elif parsed_args.image:
             logger.debug(
@@ -1180,11 +1181,15 @@ class UploadResourceCommand(BaseCommand):
             else:
                 final_resource_url = ih.copy(reference)
             logger.debug("Resource URL: %s", final_resource_url)
+            resource_type = 'oci-image'
+
+            # FIXME: handcrafting the JSON (it will be provided by Charmhub in the future)
             print("=============== FIXME quitting") #FIXME
             return
 
         result = store.upload_resource(
-            parsed_args.charm_name, parsed_args.resource_name, resource_filepath)
+            parsed_args.charm_name, parsed_args.resource_name,
+            resource_type, resource_filepath)
 
         if result.ok:
             logger.info(
