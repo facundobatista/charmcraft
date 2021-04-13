@@ -27,9 +27,8 @@ CHUNK_SIZE = 2 ** 20  # 65536
 
 def assert_response_ok(response, expected_status=200):
     """Asserts the response is ok."""
-    print("===== assert resp", response)
     if response.status_code != expected_status:
-        if response.headers['Content-Type'] in JSON_RELATED_MIMETYPES:
+        if response.headers.get('Content-Type') in JSON_RELATED_MIMETYPES:
             errors = response.json().get('errors')
         else:
             errors = None
@@ -37,8 +36,6 @@ def assert_response_ok(response, expected_status=200):
             "Wrong status code from server (expected={}, got={}) errors={} headers={}".format(
                 expected_status, response.status_code, errors, response.headers))
 
-    print("======= H!", repr(response.headers))
-    print("======= HCT?", repr(response.headers.get('Content-Type')))
     if response.headers.get('Content-Type') not in JSON_RELATED_MIMETYPES:
         return
 

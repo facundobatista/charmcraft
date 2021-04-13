@@ -19,22 +19,13 @@
 import io
 import json
 import logging
-from unittest.mock import patch, call, MagicMock
 
 import pytest
 import responses
 import requests
 
-from charmcraft.utils import ResourceOption
-from charmcraft.commands.store.registry import assert_response_ok
-
-
-@pytest.fixture
-def client_mock():
-    """Fixture to provide a mocked client."""
-    client_mock = MagicMock()
-    with patch('charmcraft.commands.store.store.Client', lambda api, storage: client_mock):
-        yield client_mock
+from charmcraft.cmdbase import CommandError
+from charmcraft.commands.store.registry import assert_response_ok, OCIRegistry
 
 
 # -- tests for response verifications
@@ -85,41 +76,93 @@ def test_assert_response_errors_in_result():
     errors = [{'foo': 'bar'}]
     test_content = {'errors': errors}
     response = create_response(json_content=test_content)
-    expected_msg == "Response with errors from server: {}".format(errors)
-    with pytest.raises(CommandError, matches=expected_msg):
+    with pytest.raises(CommandError) as cm:
         assert_response_ok(response)
+    assert str(cm.value) == "Response with errors from server: {}".format(errors)
 
 
 def test_assert_response_bad_status_code_with_json_errors():
     """Different status code than expected, with the server including errors."""
-    fixme
+    errors = [{'foo': 'bar'}]
+    test_content = {'errors': errors}
+    response = create_response(status_code=404, json_content=test_content)
+    with pytest.raises(CommandError) as cm:
+        assert_response_ok(response)
+    assert str(cm.value) == (
+        "Wrong status code from server (expected=200, got=404) errors={} "
+        "headers={{'Content-Type': 'application/json'}}".format(errors))
 
 
 def test_assert_response_bad_status_code_blind():
     """Different status code than expected, no more info."""
-    fixme
+    response = create_response(status_code=500, raw_content=b"stuff")
+    with pytest.raises(CommandError) as cm:
+        assert_response_ok(response)
+    assert str(cm.value) == (
+        "Wrong status code from server (expected=200, got=500) errors=None headers={}")
 
 
 # -- tests for OCIRegistry auth & hit helpers
 
 
-#>>> def test_url(requests_mock):
-#...     requests_mock.get('http://test.com', text='data')
-#...     assert 'data' == requests.get('http://test.com').text
-
+@responses.activate
 def test_auth_simple():
     """Simple authentication."""
-    fixme
+    responses.add(
+        responses.GET,
+        "http://auth.fakereg.com?service=test-service&scope=test-scope",
+        json={'token': 'test-token'})
+
+    ocireg = OCIRegistry("http://fakereg.com/", "test-orga", "test-image")
+    auth_info = dict(realm='http://auth.fakereg.com', service='test-service', scope='test-scope')
+    token = ocireg._authenticate(auth_info)
+    assert token == 'test-token'
+    sent_auth_header = responses.calls[0].request.headers.get('Authorization')
+    assert sent_auth_header is None
 
 
-def test_auth_with_credentials():
+@responses.activate
+def test_auth_with_credentials(caplog):
     """Authenticate passing credentials."""
-    fixme
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    responses.add(
+        responses.GET,
+        "http://auth.fakereg.com?service=test-service&scope=test-scope",
+        json={'token': 'test-token'})
+
+    ocireg = OCIRegistry("http://fakereg.com/", "test-orga", "test-image")
+    ocireg.auth_encoded_credentials = "some encoded stuff"
+    auth_info = dict(realm='http://auth.fakereg.com', service='test-service', scope='test-scope')
+    token = ocireg._authenticate(auth_info)
+    assert token == 'test-token'
+    sent_auth_header = responses.calls[0].request.headers.get('Authorization')
+    assert sent_auth_header == "Basic some encoded stuff"
+
+    # generic auth indication is logged but NOT the credentials
+    expected = "Authentication! {}".format(auth_info)
+    assert [expected] == [rec.message for rec in caplog.records]
 
 
-def test_hit_simple_auth_ok():
+@responses.activate
+def test_hit_simple_initial_auth_ok(caplog):
     """Simple GET with auth working at once."""
-    fixme
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    # set the Registry with an initial token
+    ocireg = OCIRegistry("http://fakereg.com/", "test-orga", "test-image")
+    ocireg.auth_token = 'some auth token'
+
+    # fake a 200 response
+    responses.add(responses.GET, 'http://fakereg.com/api/stuff')
+
+    # try it
+    response = ocireg._hit('GET', 'http://fakereg.com/api/stuff')
+    assert response == responses.calls[0].response
+
+    # logged what it did
+    expected = "Hitting the registry: GET http://fakereg.com/api/stuff"
+    assert [expected] == [rec.message for rec in caplog.records]
 
 
 def test_hit_simple_re_auth_ok():
