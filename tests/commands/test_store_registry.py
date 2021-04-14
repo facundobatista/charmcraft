@@ -19,9 +19,9 @@
 import io
 import json
 import logging
+from unittest.mock import patch
 
 import pytest
-import responses
 import requests
 
 from charmcraft.cmdbase import CommandError
@@ -105,8 +105,7 @@ def test_assert_response_bad_status_code_blind():
 # -- tests for OCIRegistry auth & hit helpers
 
 
-@responses.activate
-def test_auth_simple():
+def test_auth_simple(responses):
     """Simple authentication."""
     responses.add(
         responses.GET,
@@ -121,8 +120,7 @@ def test_auth_simple():
     assert sent_auth_header is None
 
 
-@responses.activate
-def test_auth_with_credentials(caplog):
+def test_auth_with_credentials(caplog, responses):
     """Authenticate passing credentials."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")
 
@@ -140,12 +138,11 @@ def test_auth_with_credentials(caplog):
     assert sent_auth_header == "Basic some encoded stuff"
 
     # generic auth indication is logged but NOT the credentials
-    expected = "Authentication! {}".format(auth_info)
+    expected = "Authenticating! {}".format(auth_info)
     assert [expected] == [rec.message for rec in caplog.records]
 
 
-@responses.activate
-def test_hit_simple_initial_auth_ok(caplog):
+def test_hit_simple_initial_auth_ok(caplog, responses):
     """Simple GET with auth working at once."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")
 
@@ -160,35 +157,109 @@ def test_hit_simple_initial_auth_ok(caplog):
     response = ocireg._hit('GET', 'http://fakereg.com/api/stuff')
     assert response == responses.calls[0].response
 
+    # verify it authed ok
+    sent_auth_header = responses.calls[0].request.headers.get('Authorization')
+    assert sent_auth_header == "Bearer some auth token"
+
     # logged what it did
     expected = "Hitting the registry: GET http://fakereg.com/api/stuff"
     assert [expected] == [rec.message for rec in caplog.records]
 
 
-def test_hit_simple_re_auth_ok():
+def test_hit_simple_re_auth_ok(responses):
     """Simple GET but needing to re-authenticate."""
-    fixme
+    # set the Registry
+    ocireg = OCIRegistry("http://fakereg.com/", "test-orga", "test-image")
+    ocireg.auth_token = 'some auth token'
+
+    # need to set up two responses!
+    # - the 401 response with the proper info to re-auth
+    # - the request that actually works
+    headers = {'Www-Authenticate': (
+        'Bearer realm="https://auth.fakereg.com/token",'
+        'service="fakereg.com",scope="repository:library/stuff:pull"')}
+    responses.add(responses.GET, 'http://fakereg.com/api/stuff', headers=headers, status=401)
+    responses.add(responses.GET, 'http://fakereg.com/api/stuff')
+
+    # try it, isolating the re-authentication (tested separatedly above)
+    with patch.object(ocireg, '_authenticate') as mock_auth:
+        mock_auth.return_value = "new auth token"
+        response = ocireg._hit('GET', 'http://fakereg.com/api/stuff')
+    assert response == responses.calls[1].response
+    mock_auth.assert_called_with({
+        'realm': 'https://auth.fakereg.com/token',
+        'scope': 'repository:library/stuff:pull',
+        'service': 'fakereg.com',
+    })
+
+    # verify it authed ok both times, with corresponding tokens, and that it stored the new one
+    sent_auth_header = responses.calls[0].request.headers.get('Authorization')
+    assert sent_auth_header == "Bearer some auth token"
+    sent_auth_header = responses.calls[1].request.headers.get('Authorization')
+    assert sent_auth_header == "Bearer new auth token"
+    assert ocireg.auth_token == "new auth token"
 
 
-def test_hit_simple_re_auth_problems():
+def test_hit_simple_re_auth_problems(responses):
     """Bad response from the re-authentication process."""
-    fixme
+    ocireg = OCIRegistry("http://fakereg.com/", "test-orga", "test-image")
+
+    # set only one response, a 401 which is broken and all will end there
+    headers = {'Www-Authenticate': 'broken header'}
+    responses.add(responses.GET, 'http://fakereg.com/api/stuff', headers=headers, status=401)
+
+    # try it, isolating the re-authentication (tested separatedly above)
+    expected = (
+        "Bad 401 response: Bearer not found; "
+        "headers: {.*'Www-Authenticate': 'broken header'.*}")
+    with pytest.raises(CommandError, match=expected):
+        ocireg._hit('GET', 'http://fakereg.com/api/stuff')
 
 
-def test_hit_different_method():
+def test_hit_different_method(responses):
     """Simple request using something else than GET."""
-    fixme
+    # set the Registry with an initial token
+    ocireg = OCIRegistry("http://fakereg.com/", "test-orga", "test-image")
+    ocireg.auth_token = 'some auth token'
+
+    # fake a 200 response
+    responses.add(responses.POST, 'http://fakereg.com/api/stuff')
+
+    # try it
+    response = ocireg._hit('POST', 'http://fakereg.com/api/stuff')
+    assert response == responses.calls[0].response
 
 
-def test_hit_including_headers():
+def test_hit_including_headers(responses):
     """A request including more headers."""
-    fixme
+    # set the Registry with an initial token
+    ocireg = OCIRegistry("http://fakereg.com/", "test-orga", "test-image")
+    ocireg.auth_token = 'some auth token'
+
+    # fake a 200 response
+    responses.add(responses.POST, 'http://fakereg.com/api/stuff')
+
+    # try it
+    response = ocireg._hit('POST', 'http://fakereg.com/api/stuff', headers={'FOO': 'bar'})
+    assert response == responses.calls[0].response
+
+    # check that it sent the requested header AND the automatic auth one
+    sent_headers = responses.calls[0].request.headers
+    assert sent_headers.get('FOO') == "bar"
+    assert sent_headers.get('Authorization') == "Bearer some auth token"
 
 
-def test_hit_extra_parameters():
+def test_hit_extra_parameters(responses):
     """The request can include extra parameters."""
-    fixme
+    ocireg = OCIRegistry("http://fakereg.com/", "test-orga", "test-image")
 
+    # fake a 200 response
+    responses.add(responses.PUT, 'http://fakereg.com/api/stuff')
+
+    # try it
+    response = ocireg._hit('PUT', 'http://fakereg.com/api/stuff', data=b'test-payload')
+    assert response == responses.calls[0].response
+    assert responses.calls[0].request.body == b'test-payload'
 
 
 #def test_():
