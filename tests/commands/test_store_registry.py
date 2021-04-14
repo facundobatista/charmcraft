@@ -262,6 +262,49 @@ def test_hit_extra_parameters(responses):
     assert responses.calls[0].request.body == b'test-payload'
 
 
-#def test_():
-#    """."""
-#    fixme
+# -- tests for other OCIRegistry helpers: full url and checkers if stuff uploaded
+
+def test_get_fully_qualified_url():
+    """Check that the url is built correctly."""
+    ocireg = OCIRegistry("http://fakereg.com/", "test-orga", "test-image")
+    url = ocireg.get_fully_qualified_url('sha256:thehash')
+    assert url == "http://fakereg.com/test-orga/test-image@sha256:thehash"
+
+def test_():
+    """."""
+    fixme
+
+
+# -- tests for the OCIRegistry manifest download and upload
+
+def test_():
+    """."""
+    fixme
+
+
+# -- tests for the OCIRegistry blob download and upload
+
+def test_():
+    """."""
+    fixme
+
+
+# -- tests for the ImageHandler blob and manifest processing
+
+def test_():
+    """."""
+    fixme
+
+
+# -- tests for the ImageHandler 'copy' functionality
+
+def test_():
+    """."""
+    fixme
+
+
+# -- tests for the ImageHandler 'get_destination_url' functionality
+
+def test_():
+    """."""
+    fixme
