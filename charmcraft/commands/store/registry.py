@@ -8,7 +8,7 @@ import logging
 import os
 from urllib.request import parse_http_list, parse_keqv_list
 
-import infoauth  # FIXME: remove this when we de-hardcode facundobatista/test
+# import infoauth  # FIXME: remove this when we de-hardcode facundobatista/test
 import requests
 
 from charmcraft.cmdbase import CommandError
