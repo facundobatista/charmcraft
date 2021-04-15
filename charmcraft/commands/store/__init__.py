@@ -18,9 +18,11 @@
 
 import ast
 import hashlib
+import json
 import logging
 import pathlib
 import string
+import tempfile
 import textwrap
 import zipfile
 from collections import namedtuple
@@ -39,6 +41,7 @@ from charmcraft.utils import (
 )
 
 from .store import Store
+from .registry import ImageHandler
 
 logger = logging.getLogger('charmcraft.commands.store')
 
@@ -1093,7 +1096,7 @@ class ListResourcesCommand(BaseCommand):
 
     def fill_parser(self, parser):
         """Add own parameters to the general parser."""
-        parser.add_argument('charm_name', metavar='resource-name', help="The name of the charm")
+        parser.add_argument('charm_name', metavar='charm-name', help="The name of the charm")
 
     def run(self, parsed_args):
         """Run the command."""
@@ -1119,6 +1122,22 @@ class ListResourcesCommand(BaseCommand):
             logger.info(line)
 
 
+def oci_image_spec(value):  # FIXME test!
+    """Build a full OCI image spec, using defaults for non specified parts."""
+    if '/' in value:
+        orga, value = value.split('/', 1)
+    else:
+        orga = 'library'
+    if '@' in value:
+        name, reference = value.split('@')
+    elif ':' in value:
+        name, reference = value.split(':')
+    else:
+        name = value
+        reference = 'latest'
+    return (orga, name, reference)
+
+
 class UploadResourceCommand(BaseCommand):
     """Upload a resource to Charmhub."""
 
@@ -1131,8 +1150,16 @@ class UploadResourceCommand(BaseCommand):
         specified charm. This charm needs to have the resource declared
         in its metadata (in a preoviously uploaded to Charmhub revision).
 
-        to the packaging standard. This command will finish successfully
-        once the package is approved by Charmhub.
+        The resource can be a file from your computer (use the '--filepath'
+        option) or an OCI Image (use the '--image' option, including a
+        '--registry' indication if needed, for example use
+        'registry.hub.docker.com' for DockerHub, the default is
+        Canonical's registry).
+
+        The OCI image description uses the [organization/]name[:reference]
+        form. The name is mandatory but organization and reference (a digest
+        or a tag) are optional, defaulting to 'library' and 'latest'
+        correspondingly.
 
         Upload will take you through login if needed.
     """)
@@ -1146,15 +1173,42 @@ class UploadResourceCommand(BaseCommand):
         parser.add_argument(
             'resource_name', metavar='resource-name',
             help="The resource name")
-        parser.add_argument(
-            '--filepath', type=SingleOptionEnsurer(useful_filepath), required=True,
+        group = parser.add_mutually_exclusive_group(required=True)  # FIXME test
+        group.add_argument(
+            '--filepath', type=SingleOptionEnsurer(useful_filepath),
             help="The file path of the resource content to upload")
+        group.add_argument(
+            '--image', type=SingleOptionEnsurer(oci_image_spec),
+            help="The image specification with the [organization/]name[:reference] form")  # FIXME test
 
     def run(self, parsed_args):
         """Run the command."""
         store = Store(self.config.charmhub)
+
+        if parsed_args.filepath:
+            resource_filepath = parsed_args.filepath
+            resource_type = 'file'
+            logger.debug("Uploading resource directly from file %s", resource_filepath)
+        elif parsed_args.image:
+            logger.debug("Uploading resource from image %r at Dockerhub", parsed_args.image)  # FIXME test
+            (orga, name, reference) = parsed_args.image
+            ih = ImageHandler(orga, name)
+            final_resource_url = ih.get_destination_url(reference)
+            logger.debug("Resource URL: %s", final_resource_url)
+            resource_type = 'oci-image'
+
+            # create a JSON pointing to the unique image URL (to be uploaded to Charmhub)
+            resource_metadata = {
+                'ImageName': final_resource_url,
+            }
+            _, tname = tempfile.mkstemp(prefix='image-resource', suffix='.json')
+            resource_filepath = pathlib.Path(tname)
+            resource_filepath.write_text(json.dumps(resource_metadata))
+
         result = store.upload_resource(
-            parsed_args.charm_name, parsed_args.resource_name, parsed_args.filepath)
+            parsed_args.charm_name, parsed_args.resource_name,  # FIXME test
+            resource_type, resource_filepath)
+
         if result.ok:
             logger.info(
                 "Revision %s created of resource %r for charm %r",
@@ -1175,7 +1229,7 @@ class ListResourceRevisionsCommand(BaseCommand):
 
         For example:
 
-           $ charmcraft resource-revisions
+           $ charmcraft resource-revisions my-charm my-resource
            Revision    Created at     Size
            1           2020-11-15   183151
 
