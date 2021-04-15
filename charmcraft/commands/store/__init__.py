@@ -1071,7 +1071,7 @@ class ListResourcesCommand(BaseCommand):
 
     def fill_parser(self, parser):
         """Add own parameters to the general parser."""
-        parser.add_argument('charm_name', metavar='resource-name', help="The name of the charm")
+        parser.add_argument('charm_name', metavar='charm-name', help="The name of the charm")
 
     def run(self, parsed_args):
         """Run the command."""
@@ -1176,7 +1176,8 @@ class UploadResourceCommand(BaseCommand):
         elif parsed_args.image:
             # FIXME temporary situation
             # logger.debug(
-            #     "Uploading resource from image %r at %r", parsed_args.image, parsed_args.registry)
+            #     "Uploading resource from image %r at %r",
+            #     parsed_args.image, parsed_args.registry)
             # (orga, name, reference) = parsed_args.image
             # ih = ImageHandler(parsed_args.registry, orga, name)
             # if parsed_args.registry is None:
@@ -1196,12 +1197,9 @@ class UploadResourceCommand(BaseCommand):
             resource_metadata = {
                 'ImageName': final_resource_url,
             }
-            _, resource_filepath = tempfile.mkstemp(prefix='image-resource', suffix='.json')
-            with open(resource_filepath, 'wt', encoding='utf8') as fh:
-                json.dump(resource_metadata, fh)
-            print("======== resource metadata:", resource_metadata)
-            print("FIXME, exiting")
-            exit()
+            _, tname = tempfile.mkstemp(prefix='image-resource', suffix='.json')
+            resource_filepath = pathlib.Path(tname)
+            resource_filepath.write_text(json.dumps(resource_metadata))
 
         result = store.upload_resource(
             parsed_args.charm_name, parsed_args.resource_name,
@@ -1227,7 +1225,7 @@ class ListResourceRevisionsCommand(BaseCommand):
 
         For example:
 
-           $ charmcraft resource-revisions
+           $ charmcraft resource-revisions my-charm my-resource
            Revision    Created at     Size
            1           2020-11-15   183151
 
