@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 MANIFEST_LISTS = 'application/vnd.docker.distribution.manifest.list.v2+json'
 MANIFEST_V2_MIMETYPE = 'application/vnd.docker.distribution.manifest.v2+json'
 LAYER_MIMETYPE = 'application/vnd.docker.image.rootfs.diff.tar.gzip'
-JSON_RELATED_MIMETYPES = {'application/json', MANIFEST_LISTS, MANIFEST_V2_MIMETYPE}
+JSON_RELATED_MIMETYPES = {
+    'application/json',
+    'application/vnd.docker.distribution.manifest.v1+prettyjws',  # signed manifest
+    MANIFEST_LISTS,
+    MANIFEST_V2_MIMETYPE,
+}
 
 # downloads and uploads happen in chunks
 CHUNK_SIZE = 2 ** 20  # 65536
@@ -46,8 +51,8 @@ def assert_response_ok(response, expected_status=200):
 
 
 class OCIRegistry:
-    def __init__(self, base_url, organization, image_name):
-        self.base_url = base_url
+    def __init__(self, server, organization, image_name):
+        self.server = server
         self.orga = organization
         self.name = image_name
 
@@ -70,7 +75,7 @@ class OCIRegistry:
 
     def _get_url(self, subpath):
         """Build the URL completing the subpath."""
-        return "{}/{}/{}/{}".format(self.base_url, self.orga, self.name, subpath)
+        return "https://{}/v2/{}/{}/{}".format(self.server, self.orga, self.name, subpath)
 
     def _get_auth_info(self, response):
         """Parse a 401 response and get the needed auth parameters."""
@@ -104,7 +109,7 @@ class OCIRegistry:
 
     def get_fully_qualified_url(self, digest):
         """Return the fully qualified URL univocally specifying the element in the registry."""
-        return "{}/{}/{}@{}".format(self.base_url, self.orga, self.name, digest)
+        return "{}/{}/{}@{}".format(self.server, self.orga, self.name, digest)
 
     def get_manifest(self, reference):
         """Get the manifest for the indicated reference."""
@@ -292,10 +297,6 @@ class SourceRegistry(OCIRegistry):
     It doesn't have any specific auth requeriments, will be read-only of public images.
     """
 
-    def __init__(self, src_registry, organization, image_name):
-        base_url = "https://{}/v2".format(src_registry)
-        super().__init__(base_url, organization, image_name)
-
 
 class CanonicalRegistry(OCIRegistry):
     """Work read/write with the Canonical's registry."""
@@ -303,8 +304,7 @@ class CanonicalRegistry(OCIRegistry):
     def __init__(self):
         # FIXME: this is hardcoded to try everything against private Dockerhub
         orga, name = 'facundobatista', 'test'
-        base_url = "https://registry.hub.docker.com/v2"
-        super().__init__(base_url, orga, name)
+        super().__init__("registry.hub.docker.com", orga, name)
 
         # load and encode credentials that will be used during authentication
         # FIXME: we need to adapt this to the Canonical's auth
@@ -313,12 +313,22 @@ class CanonicalRegistry(OCIRegistry):
         self.auth_encoded_credentials = base64.b64encode(_u_p.encode('ascii')).decode('ascii')
 
 
+class PublicDockerhubRegistry(OCIRegistry):
+    """Hardcoded Dockerhub registry without special credentials."""
+
+    def __init__(self, organization, image_name):
+        super().__init__("registry.hub.docker.com", organization, image_name)
+
+
 class ImageHandler:
     """Provide specific functionalities around images."""
 
     def __init__(self, src_registry, organization, image_name):
-        self.src_registry = SourceRegistry(src_registry, organization, image_name)
-        self.dst_registry = CanonicalRegistry()
+        # FIXME! temporary situation
+        # self.src_registry = SourceRegistry(src_registry, organization, image_name)
+        # self.dst_registry = CanonicalRegistry()
+        self.src_registry = None
+        self.dst_registry = PublicDockerhubRegistry(organization, image_name)
         self.temp_filepaths = []  # FIXME: delete all this when the process is done
 
     def _process_blob(self, blob_size, blob_digest):
@@ -429,5 +439,8 @@ class ImageHandler:
         digest = self.dst_registry.is_manifest_already_uploaded(reference)
         if digest is None:
             raise CommandError("The indicated manifest is not in the destination registry")
+
+        # need to actually get the manifest, because this is what we'll end up getting the v2 one
+        _, digest, _ = self.dst_registry.get_manifest(reference)
         final_fqu = self.dst_registry.get_fully_qualified_url(digest)
         return final_fqu

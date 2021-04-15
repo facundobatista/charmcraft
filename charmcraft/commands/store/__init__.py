@@ -18,9 +18,11 @@
 
 import ast
 import hashlib
+import json
 import logging
 import pathlib
 import string
+import tempfile
 import textwrap
 import zipfile
 from collections import namedtuple
@@ -1172,20 +1174,34 @@ class UploadResourceCommand(BaseCommand):
             resource_type = 'file'
             logger.debug("Uploading resource directly from file %s", resource_filepath)
         elif parsed_args.image:
-            logger.debug(
-                "Uploading resource from image %r at %r", parsed_args.image, parsed_args.registry)
+            # FIXME temporary situation
+            # logger.debug(
+            #     "Uploading resource from image %r at %r", parsed_args.image, parsed_args.registry)
+            # (orga, name, reference) = parsed_args.image
+            # ih = ImageHandler(parsed_args.registry, orga, name)
+            # if parsed_args.registry is None:
+            #     final_resource_url = ih.get_destination_url(reference)
+            # else:
+            #     final_resource_url = ih.copy(reference)
+            # logger.debug("Resource URL: %s", final_resource_url)
+            # resource_type = 'oci-image'
+            logger.debug("Uploading resource from image %r at Dockerhub", parsed_args.image)
             (orga, name, reference) = parsed_args.image
             ih = ImageHandler(parsed_args.registry, orga, name)
-            if parsed_args.registry is None:
-                final_resource_url = ih.get_destination_url(reference)
-            else:
-                final_resource_url = ih.copy(reference)
+            final_resource_url = ih.get_destination_url(reference)
             logger.debug("Resource URL: %s", final_resource_url)
             resource_type = 'oci-image'
 
             # FIXME: handcrafting the JSON (it will be provided by Charmhub in the future)
-            print("=============== FIXME quitting") #FIXME
-            return
+            resource_metadata = {
+                'ImageName': final_resource_url,
+            }
+            _, resource_filepath = tempfile.mkstemp(prefix='image-resource', suffix='.json')
+            with open(resource_filepath, 'wt', encoding='utf8') as fh:
+                json.dump(resource_metadata, fh)
+            print("======== resource metadata:", resource_metadata)
+            print("FIXME, exiting")
+            exit()
 
         result = store.upload_resource(
             parsed_args.charm_name, parsed_args.resource_name,
