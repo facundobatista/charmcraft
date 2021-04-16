@@ -38,7 +38,7 @@ JSON_RELATED_MIMETYPES = {
 
 
 def assert_response_ok(response, expected_status=200):
-    """Asserts the response is ok."""
+    """Assert the response is ok."""
     if response.status_code != expected_status:
         if response.headers.get('Content-Type') in JSON_RELATED_MIMETYPES:
             errors = response.json().get('errors')
@@ -58,6 +58,8 @@ def assert_response_ok(response, expected_status=200):
 
 
 class OCIRegistry:
+    """Interface to a generic OCI Registry."""
+
     def __init__(self, server, organization, image_name):
         self.server = server
         self.orga = organization

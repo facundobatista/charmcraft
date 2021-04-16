@@ -114,11 +114,11 @@ def test_auth_simple(responses):
     """Simple authentication."""
     responses.add(
         responses.GET,
-        "http://auth.fakereg.com?service=test-service&scope=test-scope",
+        "https://auth.fakereg.com?service=test-service&scope=test-scope",
         json={'token': 'test-token'})
 
     ocireg = OCIRegistry("fakereg.com", "test-orga", "test-image")
-    auth_info = dict(realm='http://auth.fakereg.com', service='test-service', scope='test-scope')
+    auth_info = dict(realm='https://auth.fakereg.com', service='test-service', scope='test-scope')
     token = ocireg._authenticate(auth_info)
     assert token == 'test-token'
     sent_auth_header = responses.calls[0].request.headers.get('Authorization')
@@ -131,12 +131,12 @@ def test_auth_with_credentials(caplog, responses):
 
     responses.add(
         responses.GET,
-        "http://auth.fakereg.com?service=test-service&scope=test-scope",
+        "https://auth.fakereg.com?service=test-service&scope=test-scope",
         json={'token': 'test-token'})
 
     ocireg = OCIRegistry("fakereg.com", "test-orga", "test-image")
     ocireg.auth_encoded_credentials = "some encoded stuff"
-    auth_info = dict(realm='http://auth.fakereg.com', service='test-service', scope='test-scope')
+    auth_info = dict(realm='https://auth.fakereg.com', service='test-service', scope='test-scope')
     token = ocireg._authenticate(auth_info)
     assert token == 'test-token'
     sent_auth_header = responses.calls[0].request.headers.get('Authorization')
