@@ -121,10 +121,7 @@ class OCIRegistry:
         return "{}/{}/{}@{}".format(self.server, self.orga, self.name, digest)
 
     def _is_item_already_uploaded(self, url):
-        """Generic verification for uploaded items.
-
-        If the item is uploaded, return its digest (else None).
-        """
+        """Verify if a generic item is uploaded."""
         response = self._hit('HEAD', url)
 
         if response.status_code == 200:
@@ -202,7 +199,8 @@ class ImageHandler:
     def get_destination_url(self, reference):
         """Get the fully qualified URL in the destination registry for a tag/digest reference."""
         if not self.dst_registry.is_manifest_already_uploaded(reference):
-            raise CommandError("The indicated manifest is not in the destination registry")
+            raise CommandError(
+                "The {!r} image does not exist in the destination registry".format(reference))
 
         # need to actually get the manifest, because this is what we'll end up getting the v2 one
         _, digest, _ = self.dst_registry.get_manifest(reference)
