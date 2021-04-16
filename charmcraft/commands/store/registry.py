@@ -48,7 +48,6 @@ def assert_response_ok(response, expected_status=200):
             "Wrong status code from server (expected={}, got={}) errors={} headers={}".format(
                 expected_status, response.status_code, errors, response.headers))
 
-    print("====== assok", response.headers)
     if response.headers.get('Content-Type') not in JSON_RELATED_MIMETYPES:
         return
 
@@ -127,10 +126,8 @@ class OCIRegistry:
             'Accept': MANIFEST_LISTS,
         }
         response = self._hit('GET', url, headers=headers)
-        print("========== RE", response.text)
         result = assert_response_ok(response)
         digest = response.headers['Docker-Content-Digest']
-        print("========== RE", repr(result))
 
         # the response can be the manifest itself or a list of manifests (only determined
         # by the presence of the 'manifests' key
@@ -148,8 +145,9 @@ class OCIRegistry:
             }
             response = self._hit('GET', url, headers=headers)
             result = assert_response_ok(response)
-            if result['schemaVersion'] != 2:
-                raise CommandError("Manifest v2 requested but got something else: %s", result)
+            if result.get('schemaVersion') != 2:
+                raise CommandError(
+                    "Manifest v2 requested but got something else: {}".format(result))
             logger.debug("Got the v2 manifest ok")
             digest = response.headers['Docker-Content-Digest']
         return (None, digest, response.text)
