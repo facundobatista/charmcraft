@@ -48,6 +48,7 @@ def assert_response_ok(response, expected_status=200):
             "Wrong status code from server (expected={}, got={}) errors={} headers={}".format(
                 expected_status, response.status_code, errors, response.headers))
 
+    print("====== assok", response.headers)
     if response.headers.get('Content-Type') not in JSON_RELATED_MIMETYPES:
         return
 
@@ -121,13 +122,15 @@ class OCIRegistry:
     def get_manifest(self, reference):
         """Get the manifest for the indicated reference."""
         url = self._get_url("manifests/{}".format(reference))
-        logger.debug("Getting manifests list from %s", url)
+        logger.debug("Getting manifests list for %s", reference)
         headers = {
             'Accept': MANIFEST_LISTS,
         }
         response = self._hit('GET', url, headers=headers)
+        print("========== RE", response.text)
         result = assert_response_ok(response)
         digest = response.headers['Docker-Content-Digest']
+        print("========== RE", repr(result))
 
         # the response can be the manifest itself or a list of manifests (only determined
         # by the presence of the 'manifests' key
@@ -156,29 +159,22 @@ class OCIRegistry:
 
         If the item is uploaded, return its digest (else None).
         """
-        while True:
-            response = self._hit('HEAD', url)
-            if response.status_code in (302, 307):
-                logger.debug("The verification was redirected")
-                url = response.headers['Location']
-            else:
-                # one way or the other, we're done
-                break
+        response = self._hit('HEAD', url)
 
         if response.status_code == 200:
             # item is there, done!
-            digest = response.headers['Docker-Content-Digest']
+            uploaded = True
         elif response.status_code == 404:
             # confirmed item is NOT there
-            digest = None
+            uploaded = False
         else:
             # something else is going on, log what we have and return False so at least
             # we can continue with the upload
             logger.debug(
                 "Bad response when checking for uploaded %r: %r (headers=%s)",
-                url, response, response.headers)
-            digest = None
-        return digest
+                url, response.status_code, response.headers)
+            uploaded = False
+        return uploaded
 
     def is_manifest_already_uploaded(self, reference):
         """Verify if the manifest is already uploaded, using a generic reference.
@@ -205,8 +201,7 @@ class ImageHandler:
 
     def get_destination_url(self, reference):
         """Get the fully qualified URL in the destination registry for a tag/digest reference."""
-        digest = self.dst_registry.is_manifest_already_uploaded(reference)
-        if digest is None:
+        if not self.dst_registry.is_manifest_already_uploaded(reference):
             raise CommandError("The indicated manifest is not in the destination registry")
 
         # need to actually get the manifest, because this is what we'll end up getting the v2 one
