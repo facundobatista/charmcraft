@@ -45,8 +45,9 @@ from .registry import ImageHandler
 
 logger = logging.getLogger('charmcraft.commands.store')
 
-# entity types
+# some types
 EntityType = namedtuple("EntityType", "charm bundle")(charm="charm", bundle="bundle")
+ResourceType = namedtuple("ResourceType", "file oci_image")(file="file", oci_image="oci-image")
 
 LibData = namedtuple(
     'LibData', 'lib_id api patch content content_hash full_name path lib_name charm_name')
@@ -1187,7 +1188,7 @@ class UploadResourceCommand(BaseCommand):
 
         if parsed_args.filepath:
             resource_filepath = parsed_args.filepath
-            resource_type = 'file'
+            resource_type = ResourceType.file
             logger.debug("Uploading resource directly from file %s", resource_filepath)
         elif parsed_args.image:
             logger.debug("Uploading resource from image %r at Dockerhub", parsed_args.image)  # FIXME test
@@ -1206,7 +1207,7 @@ class UploadResourceCommand(BaseCommand):
             resource_filepath.write_text(json.dumps(resource_metadata))
 
         result = store.upload_resource(
-            parsed_args.charm_name, parsed_args.resource_name,  # FIXME test
+            parsed_args.charm_name, parsed_args.resource_name,
             resource_type, resource_filepath)
 
         if result.ok:

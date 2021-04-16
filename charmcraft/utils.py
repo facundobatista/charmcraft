@@ -197,7 +197,7 @@ def create_manifest(basedir, started_at):
         'charmcraft-started-at': started_at.isoformat() + "Z",
         'bases': [
             {
-                'name': os_platform.system.lower(),  #FIXME: needs tests!
+                'name': os_platform.system.lower(),
                 'channel': os_platform.release,
                 'architectures': architectures,
             }
