@@ -342,7 +342,7 @@ def test_is_item_uploaded_strange_response(responses, caplog):
     assert expected in [rec.message for rec in caplog.records]
 
 
-# -- tests for the OCIRegistry manifest download
+# -- tests for the OCIRegistry manifest download and upload
 
 def test_get_manifest_simple_v2(responses, caplog):
     """Straightforward download of a v2 manifest."""
@@ -433,6 +433,31 @@ def test_get_manifest_bad_v2(responses):
     with pytest.raises(CommandError) as cm:
         ocireg.get_manifest('test-reference')
     assert str(cm.value) == "Manifest v2 requested but got something else: {'sadly broken': ':('}"
+
+def test_upload_manifest():
+    """."""
+    fixme
+
+
+# -- tests for the OCIRegistry blob download and upload
+
+def test_():
+    """."""
+    fixme
+
+
+# -- tests for the ImageHandler blob and manifest processing
+
+def test_():
+    """."""
+    fixme
+
+
+# -- tests for the ImageHandler 'copy' functionality
+
+def test_():
+    """."""
+    fixme
 
 
 # -- tests for the ImageHandler 'get_destination_url' functionality

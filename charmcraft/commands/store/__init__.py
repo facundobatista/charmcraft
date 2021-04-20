@@ -1171,7 +1171,10 @@ class UploadResourceCommand(BaseCommand):
         in its metadata (in a preoviously uploaded to Charmhub revision).
 
         The resource can be a file from your computer (use the '--filepath'
-        option) or an OCI Image (use the '--image' option).
+        option) or an OCI Image (use the '--image' option, including a
+        '--registry' indication if needed, for example use
+        'registry.hub.docker.com' for DockerHub, the default is
+        Canonical's registry).
 
         The OCI image description uses the [organization/]name[:tag|@digest]
         form. The name is mandatory but organization and reference (a digest
@@ -1197,6 +1200,17 @@ class UploadResourceCommand(BaseCommand):
         group.add_argument(
             '--image', type=SingleOptionEnsurer(oci_image_spec),
             help="The image specification with the [organization/]name[:tag|@digest] form")
+        parser.add_argument(
+            '--registry', type=SingleOptionEnsurer(str),
+            help="The file path of the resource content to upload")
+
+    def parsed_args_post_verification(self, parser, parsed_args):
+        """Verify any corner case that can not be expressed with argparse.
+
+        If --registry is given, --image must be present.
+        """
+        if parsed_args.registry is not None and parsed_args.image is None:
+            parser.error("argument --registry: not allowed without argument --image")
 
     def run(self, parsed_args):
         """Run the command."""
@@ -1208,6 +1222,20 @@ class UploadResourceCommand(BaseCommand):
             resource_type = ResourceType.file
             logger.debug("Uploading resource directly from file %s", resource_filepath)
         elif parsed_args.image:
+
+            # FIXME temporary situation
+            # logger.debug(
+            #     "Uploading resource from image %r at %r",
+            #     parsed_args.image, parsed_args.registry)
+            # (orga, name, reference) = parsed_args.image
+            # ih = ImageHandler(parsed_args.registry, orga, name)
+            # if parsed_args.registry is None:
+            #     final_resource_url = ih.get_destination_url(reference)
+            # else:
+            #     final_resource_url = ih.copy(reference)
+            # logger.debug("Resource URL: %s", final_resource_url)
+            # resource_type = 'oci-image'
+
             logger.debug("Uploading resource from image %s at Dockerhub", parsed_args.image)
             ih = ImageHandler(parsed_args.image.organization, parsed_args.image.name)
             final_resource_url = ih.get_destination_url(parsed_args.image.reference)

@@ -302,6 +302,27 @@ def test_dispatcher_commands_are_not_loaded_if_not_needed():
     assert isinstance(MyCommand1._executed[0], argparse.Namespace)
 
 
+def test_dispatcher_commands_exec_parsed_args_post_verification_ok():
+    """Runs the parsed_args_post_verification method."""
+
+    class MyCommand(BaseCommand):
+
+        name = 'command'
+        help_msg = "some help"
+        _executed = []
+
+        def parsed_args_post_verification(self, parser, parsed_args):
+            self._executed.append((parser, parsed_args))
+
+    groups = [('test-group', 'title', [MyCommand])]
+    dispatcher = Dispatcher(['command1'], groups)
+    dispatcher.run()
+    assert MyCommand._executed
+    (parser, parsed_args) = MyCommand._executed
+    assert isinstance(parser, argparse.Namespace)
+    assert isinstance(parsed_args, argparse.Namespace)
+
+
 # --- Tests for the main entry point
 
 # In all the test methods below we patch Dispatcher.run so we don't really exercise any

@@ -2311,6 +2311,7 @@ def test_uploadresource_options_image_type(config):
 @pytest.mark.parametrize("sysargs", [
     ('c', 'r', '--filepath=fpath'),
     ('c', 'r', '--image=x'),
+    ('c', 'r', '--image=x', '--registry=y'),
 ])
 def test_uploadresource_options_good_combinations(tmp_path, config, sysargs, monkeypatch):
     """Check the specific rules for filepath and image/[registry] good combinations."""
@@ -2330,6 +2331,9 @@ def test_uploadresource_options_good_combinations(tmp_path, config, sysargs, mon
 @pytest.mark.parametrize("sysargs", [
     ('c', 'r'),  # filepath XOR image needs to be specified
     ('c', 'r', '--filepath=fpath', '--image=y'),  # can't specify both
+    ('c', 'r', '--filepath=fpath', '--image=y', '--registry=z'),  # can't specify both, w/ registry
+    ('c', 'r', '--filepath=fpath', '--registry=y'),  # registry only makes sense with image
+    ('c', 'r', '--registry=x'),  # registry only makes sense when image is there
 ])
 def test_uploadresource_options_bad_combinations(config, sysargs, tmp_path, monkeypatch):
     """Check the specific rules for filepath and image/[registry] bad combinations."""

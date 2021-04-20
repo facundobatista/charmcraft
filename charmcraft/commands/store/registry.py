@@ -16,9 +16,14 @@
 
 """Module to work with OCI registries."""
 
+import base64
+import hashlib
+import json
 import logging
+import os
 from urllib.request import parse_http_list, parse_keqv_list
 
+import infoauth  # FIXME: remove this when we de-hardcode facundobatista/test
 import requests
 
 from charmcraft.cmdbase import CommandError
@@ -35,6 +40,9 @@ JSON_RELATED_MIMETYPES = {
     MANIFEST_LISTS,
     MANIFEST_V2_MIMETYPE,
 }
+
+# downloads and uploads happen in chunks
+CHUNK_SIZE = 2 ** 20  # 65536
 
 
 def assert_response_ok(response, expected_status=200):
@@ -182,19 +190,241 @@ class OCIRegistry:
             digest = response.headers['Docker-Content-Digest']
         return (None, digest, response.text)
 
+    def upload_manifest(self, manifest, reference, *, multiple_manifest=False):
+        """Upload a manifest."""
+        mimetype = MANIFEST_LISTS if multiple_manifest else MANIFEST_V2_MIMETYPE
+        url = self._get_url("manifests/{}".format(reference))
+        headers = {
+            'Content-Type': mimetype,
+        }
+        logger.debug("Uploading manifest with reference %s", reference)
+        response = self._hit('PUT', url, headers=headers, data=manifest.encode('utf8'))
+        assert_response_ok(response, expected_status=201)
+        logger.debug("Manifest uploaded OK")
 
-class PublicDockerhubRegistry(OCIRegistry):
-    """Dockerhub registry without special credentials."""
+    def download_blob(self, filepath, blob_size, blob_digest):
+        """Download the blob to a temp file."""
+        hash_method, hash_value = blob_digest.split(':')
+        logger.debug("Downloading the blob")
+        url = self._get_url("blobs/{}".format(blob_digest))
 
-    def __init__(self, organization, image_name):
-        super().__init__("registry.hub.docker.com", organization, image_name)
+        while True:
+            response = self._hit('GET', url, stream=True)
+            if response.status_code == 200:
+                # let's pull the bytes
+                break
+
+            if response.status_code in (302, 307):
+                url = response.headers['Location']
+                logger("Got a redirection to %s", url)
+                continue
+
+            # something else is going on
+            raise CommandError(
+                "Got wrong response when downloading an image: {!r}".format(response))
+
+        hasher = hashlib.new(hash_method)
+        downloaded_total = 0
+        with open(filepath, 'wb') as fh:
+            for chunk in response.iter_content(CHUNK_SIZE):
+                # FIXME: indicate progress
+                downloaded_total += len(chunk)
+                hasher.update(chunk)
+                fh.write(chunk)
+
+        digest = hasher.hexdigest()
+        logger.debug("Downloading done, size=%s digest=%s", downloaded_total, digest)
+        if digest != hash_value or downloaded_total != blob_size:
+            raise CommandError("Download corrupted")
+
+    def upload_blob(self, filepath, size, digest):
+        """Upload the blob from a file."""
+        # push the blob
+        logger.debug("Getting URL to push the blob")
+        url = self._get_url("blobs/uploads/")
+        response = self._hit('POST', url)
+        assert_response_ok(response, expected_status=202)
+        upload_url = response.headers['Location']
+        range_from, range_to_inclusive = [int(x) for x in response.headers['Range'].split('-')]
+        logger.debug("Got upload URL ok with range %s-%s", range_from, range_to_inclusive)
+        if range_from != 0:
+            raise CommandError("Bad range received")
+        if range_to_inclusive == 0:
+            range_to_inclusive = -1
+
+        # start the chunked upload
+        from_position = range_to_inclusive + 1
+        with open(filepath, 'rb') as fh:
+            fh.seek(from_position)
+            while True:
+                chunk = fh.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+
+                end_position = from_position + len(chunk)
+                headers = {
+                    'Content-Length': str(len(chunk)),
+                    'Content-Range': '{}-{}'.format(from_position, end_position),
+                    'Content-Type': 'application/octet-stream',
+                }
+                # FIXME: add proper progress indication
+                print("======= pumping {} range {}-{}/{} {:.2f}%".format(
+                    len(chunk), from_position, end_position, size, 100 * end_position / size))
+                response = self._hit('PATCH', upload_url, headers=headers, data=chunk)
+                assert_response_ok(response, expected_status=202)
+
+                upload_url = response.headers['Location']
+                from_position += len(chunk)
+
+        headers = {
+            'Content-Length': '0',
+            'Connection': 'close',
+        }
+        logger.debug("Closing the upload")
+        closing_url = "{}&digest={}".format(upload_url, digest)
+
+        response = self._hit('PUT', closing_url, headers=headers, data='')
+        assert_response_ok(response, expected_status=201)
+        logger.debug("Upload finished OK")
+        if response.headers['Docker-Content-Digest'] != digest:
+            raise CommandError("Upload corrupted")
+
+
+class SourceRegistry(OCIRegistry):
+    """Generic source OCI registry.
+
+    It doesn't have any specific auth requeriments, will be read-only of public images.
+    """
+
+
+class CanonicalRegistry(OCIRegistry):
+    """Work read/write with the Canonical's registry."""
+
+    def __init__(self):
+        # FIXME: this is hardcoded to try everything against private Dockerhub
+        orga, name = 'facundobatista', 'test'
+        super().__init__("registry.hub.docker.com", orga, name)
+
+        # load and encode credentials that will be used during authentication
+        # FIXME: we need to adapt this to the Canonical's auth
+        credentials = infoauth.load(os.path.expanduser('~/.dockerhub.tokens'))
+        _u_p = "{0[user]}:{0[password]}".format(credentials)
+        self.auth_encoded_credentials = base64.b64encode(_u_p.encode('ascii')).decode('ascii')
 
 
 class ImageHandler:
     """Provide specific functionalities around images."""
 
-    def __init__(self, organization, image_name):
+    def __init__(self, src_registry, organization, image_name):
+        # FIXME! temporary situation
+        # self.src_registry = SourceRegistry(src_registry, organization, image_name)
+        # self.dst_registry = CanonicalRegistry()
+        self.src_registry = None
         self.dst_registry = PublicDockerhubRegistry(organization, image_name)
+        self.temp_filepaths = []  # FIXME: delete all this when the process is done
+
+    def _process_blob(self, blob_size, blob_digest):
+        """Download and reupload a blob."""
+        logger.debug("Processing blob, size=%s, digest=%s", blob_size, blob_digest)
+
+        # if it's already uploaded, nothing to do
+        if self.dst_registry.is_blob_already_uploaded(blob_digest):
+            logger.debug("Blob was already uploaded")
+            return
+
+        # don't need to re-download the blog if the file for it is there and with correct digest
+        logger.debug("Verify if we need to download it")
+        blob_filepath = '/tmp/{}.bin'.format(blob_digest)  # FIXME: find a better location for this
+        self.temp_filepaths.append(blob_filepath)
+        need_to_download = True
+        if os.path.exists(blob_filepath):
+            with open(blob_filepath, 'rb') as fh:
+                hasher = hashlib.sha256(fh.read())
+            digest = 'sha256:{}'.format(hasher.hexdigest())
+            if blob_digest == digest:
+                need_to_download = False
+
+        if need_to_download:
+            self.src_registry.download_blob(blob_filepath, blob_size, blob_digest)
+
+        # upload
+        self.dst_registry.upload_blob(blob_filepath, blob_size, blob_digest)
+
+    def _process_manifest(self, raw_manifest):
+        """Process a v2 schema 2 manifest.
+
+        https://docs.docker.com/registry/spec/manifest-v2-2/
+        """
+        manifest = json.loads(raw_manifest)
+        logger.debug("Processing manifest version %r", manifest.get('schemaVersion'))
+
+        # download the config blob
+        blob = manifest['config']
+        logger.debug("Found config blob")
+        self._process_blob(blob['size'], blob['digest'])
+
+        # and all the layers
+        layers = manifest['layers']
+        for idx, blob in enumerate(layers, 1):
+            logger.debug("Found layer blob %s/%s", idx, len(layers))
+            if blob['mediaType'] != LAYER_MIMETYPE:
+                logger.debug("Ignoring layer: %s", blob)
+                continue
+            self._process_blob(blob['size'], blob['digest'])
+
+    def copy(self, original_reference):
+        """Copy an image from source registry to destination registry."""
+        # get the manifest or manifests; we cannot check before if the original reference is
+        # already in the destination registry, as the reference may be a tag pointing to a
+        # different image (so we need the digest from the source registry)
+        (sublist, digest, raw_manifest) = self.src_registry.get_manifest(original_reference)
+        final_fqu = self.dst_registry.get_fully_qualified_url(digest)
+
+        # handle the case of a direct manifest
+        if sublist is None:
+            logger.info("Got a single manifest with digest %s", digest)
+
+            # check if it's already uploaded
+            if self.dst_registry.is_manifest_already_uploaded(digest):
+                logger.info("Manifest was already uploaded")
+                return final_fqu
+
+            self._process_manifest(raw_manifest)
+            self.dst_registry.upload_manifest(raw_manifest, original_reference)
+            return final_fqu
+
+        # handle the case of the manifest being actually a list of manifests
+        raw_meta_manifest = raw_manifest
+        logger.info("Got a multiple manifest (len=%s) with digest %s", len(sublist), digest)
+
+        # check if it's already uploaded
+        if self.dst_registry.is_manifest_already_uploaded(digest):
+            logger.info("Meta-manifest was already uploaded")
+            return final_fqu
+
+        for idx, manifest in enumerate(sublist, 1):
+            digest = manifest['digest']
+            logger.info(
+                "Sub-manifest %s/%s for platform %s, digest %s",
+                idx, len(sublist), manifest.get('platform'), digest)
+
+            # check if it's already uploaded
+            if self.dst_registry.is_manifest_already_uploaded(digest):
+                logger.info("Sub-manifest was already uploaded")
+                continue
+
+            # download
+            logger.info("Downloading manifest")
+            (_, _, raw_manifest) = self.src_registry.get_manifest(digest)
+
+            # process and upload
+            self._process_manifest(raw_manifest)
+            self.dst_registry.upload_manifest(raw_manifest, digest)
+
+        logger.debug("Uploading meta-manifest")
+        self.dst_registry.upload_manifest(
+            raw_meta_manifest, original_reference, multiple_manifest=True)
+        return final_fqu
 
     def get_destination_url(self, reference):
         """Get the fully qualified URL in the destination registry for a tag/digest reference."""
