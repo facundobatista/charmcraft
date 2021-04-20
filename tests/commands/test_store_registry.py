@@ -434,9 +434,41 @@ def test_get_manifest_bad_v2(responses):
         ocireg.get_manifest('test-reference')
     assert str(cm.value) == "Manifest v2 requested but got something else: {'sadly broken': ':('}"
 
-def test_upload_manifest():
-    """."""
-    fixme
+
+def test_upload_manifest_v2(responses, caplog):
+    """Upload a V2 manifest."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+    ocireg = OCIRegistry("fakereg.com", "test-orga", "test-image")
+
+    url = 'https://fakereg.com/v2/test-orga/test-image/manifests/test-reference'
+    responses.add(responses.PUT, url, status=201)
+
+    # try it
+    raw_manifest_data = 'test-manifest'
+    ocireg.upload_manifest(raw_manifest_data, 'test-reference')
+
+    # check logs
+    log_lines = [rec.message for rec in caplog.records]
+    assert "Uploading manifest with reference test-reference" in log_lines
+    assert "Manifest uploaded OK" in log_lines
+
+    # check header and data sent
+    assert responses.calls[0].request.headers['Content-Type'] == MANIFEST_V2_MIMETYPE
+    assert responses.calls[0].request.body == raw_manifest_data.encode('ascii')
+
+
+def test_upload_manifest_list(responses):
+    """Upload a "multiple" manifest."""
+    ocireg = OCIRegistry("fakereg.com", "test-orga", "test-image")
+
+    url = 'https://fakereg.com/v2/test-orga/test-image/manifests/test-reference'
+    responses.add(responses.PUT, url, status=201)
+
+    # try it
+    ocireg.upload_manifest('test-manifest', 'test-reference', multiple_manifest=True)
+
+    # check header and data sent
+    assert responses.calls[0].request.headers['Content-Type'] == MANIFEST_LISTS
 
 
 # -- tests for the OCIRegistry blob download and upload
