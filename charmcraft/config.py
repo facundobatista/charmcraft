@@ -98,6 +98,7 @@ class CharmhubConfig:
 
     api_url = attr.ib(default='https://api.charmhub.io')
     storage_url = attr.ib(default='https://storage.snapcraftcontent.com')
+    registry_url = attr.ib(default='https://registry.jujucharms.com')
 
     @classmethod
     def from_dict(cls, source):
@@ -147,8 +148,9 @@ CONFIG_SCHEMA = {
         'charmhub': {
             'type': 'object',
             'properties': {
-                'api_url': {'type': 'string', 'format': 'url'},
-                'storage_url': {'type': 'string', 'format': 'url'},
+                'api-url': {'type': 'string', 'format': 'url'},
+                'storage-url': {'type': 'string', 'format': 'url'},
+                'registry-url': {'type': 'string', 'format': 'url'},
             },
             'additionalProperties': False,
         },

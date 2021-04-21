@@ -21,9 +21,9 @@ import hashlib
 import json
 import logging
 import os
+from urllib.parse import urlparse
 from urllib.request import parse_http_list, parse_keqv_list
 
-import infoauth  # FIXME: remove this when we de-hardcode facundobatista/test
 import requests
 
 from charmcraft.cmdbase import CommandError
@@ -68,13 +68,16 @@ def assert_response_ok(response, expected_status=200):
 class OCIRegistry:
     """Interface to a generic OCI Registry."""
 
-    def __init__(self, server, organization, image_name):
+    def __init__(self, server, image_name, credentials=None):
         self.server = server
-        self.orga = organization
-        self.name = image_name
-
+        self.image_name = image_name
         self.auth_token = None
-        self.auth_encoded_credentials = None
+
+        if credentials is None:
+            self.auth_encoded_credentials = None
+        else:
+            _u_p = "{0.user}:{0.password}".format(credentials)
+            self.auth_encoded_credentials = base64.b64encode(_u_p.encode('ascii')).decode('ascii')
 
     def _authenticate(self, auth_info):
         """Get the auth token."""
@@ -92,7 +95,8 @@ class OCIRegistry:
 
     def _get_url(self, subpath):
         """Build the URL completing the subpath."""
-        return "https://{}/v2/{}/{}/{}".format(self.server, self.orga, self.name, subpath)
+        #FIXME: understand how this v2 works in the Canonical's registry context
+        return "{}/v2/{}/{}".format(self.server, self.image_name, subpath)
 
     def _get_auth_info(self, response):
         """Parse a 401 response and get the needed auth parameters."""
@@ -124,9 +128,10 @@ class OCIRegistry:
 
         return response
 
-    def get_fully_qualified_url(self, digest):
+    def get_fully_qualified_url(self, digest):  #FIXME: ¿esta la queremos?????
         """Return the fully qualified URL univocally specifying the element in the registry."""
-        return "{}/{}/{}@{}".format(self.server, self.orga, self.name, digest)
+        parsed_url = urlparse(self.server)
+        return "{}/{}@{}".format(parsed_url.netloc, self.image_name, digest)
 
     def _is_item_already_uploaded(self, url):
         """Verify if a generic item is uploaded."""
@@ -227,8 +232,9 @@ class OCIRegistry:
         downloaded_total = 0
         with open(filepath, 'wb') as fh:
             for chunk in response.iter_content(CHUNK_SIZE):
-                # FIXME: indicate progress
                 downloaded_total += len(chunk)
+                progress = 100 * downloaded_total / blob_size
+                print("Downloading.. {:.2f}%\r".format(progress), end='', flush=True)
                 hasher.update(chunk)
                 fh.write(chunk)
 
@@ -267,9 +273,8 @@ class OCIRegistry:
                     'Content-Range': '{}-{}'.format(from_position, end_position),
                     'Content-Type': 'application/octet-stream',
                 }
-                # FIXME: add proper progress indication
-                print("======= pumping {} range {}-{}/{} {:.2f}%".format(
-                    len(chunk), from_position, end_position, size, 100 * end_position / size))
+                progress = 100 * end_position / size
+                print("Uploading.. {:.2f}%\r".format(progress), end='', flush=True)
                 response = self._hit('PATCH', upload_url, headers=headers, data=chunk)
                 assert_response_ok(response, expected_status=202)
 
@@ -290,38 +295,23 @@ class OCIRegistry:
             raise CommandError("Upload corrupted")
 
 
-class SourceRegistry(OCIRegistry):
-    """Generic source OCI registry.
-
-    It doesn't have any specific auth requeriments, will be read-only of public images.
-    """
-
-
-class CanonicalRegistry(OCIRegistry):
-    """Work read/write with the Canonical's registry."""
-
-    def __init__(self):
-        # FIXME: this is hardcoded to try everything against private Dockerhub
-        orga, name = 'facundobatista', 'test'
-        super().__init__("registry.hub.docker.com", orga, name)
-
-        # load and encode credentials that will be used during authentication
-        # FIXME: we need to adapt this to the Canonical's auth
-        credentials = infoauth.load(os.path.expanduser('~/.dockerhub.tokens'))
-        _u_p = "{0[user]}:{0[password]}".format(credentials)
-        self.auth_encoded_credentials = base64.b64encode(_u_p.encode('ascii')).decode('ascii')
-
-
 class ImageHandler:
     """Provide specific functionalities around images."""
 
-    def __init__(self, src_registry, organization, image_name):
-        # FIXME! temporary situation
-        # self.src_registry = SourceRegistry(src_registry, organization, image_name)
-        # self.dst_registry = CanonicalRegistry()
-        self.src_registry = None
-        self.dst_registry = PublicDockerhubRegistry(organization, image_name)
+    def __init__(
+            self, config, image_name, *, src_registry_url=None, dst_registry_credentials=None):
         self.temp_filepaths = []  # FIXME: delete all this when the process is done
+
+        # configure a source registry only if an URL is provided (some functionality here
+        # only works with a destination registry)
+        if src_registry_url is None:
+            self.src_registry = None
+        else:
+            self.src_registry = OCIRegistry(src_registry_url, image_name)
+
+        # configure the destination registry from the configuration URL
+        self.dst_registry = OCIRegistry(
+            config.charmhub.registry_url, image_name, dst_registry_credentials)
 
     def _process_blob(self, blob_size, blob_digest):
         """Download and reupload a blob."""
@@ -372,13 +362,12 @@ class ImageHandler:
                 continue
             self._process_blob(blob['size'], blob['digest'])
 
-    def copy(self, original_reference):
+    def copy_image(self, reference):
         """Copy an image from source registry to destination registry."""
         # get the manifest or manifests; we cannot check before if the original reference is
         # already in the destination registry, as the reference may be a tag pointing to a
         # different image (so we need the digest from the source registry)
-        (sublist, digest, raw_manifest) = self.src_registry.get_manifest(original_reference)
-        final_fqu = self.dst_registry.get_fully_qualified_url(digest)
+        (sublist, digest, raw_manifest) = self.src_registry.get_manifest(reference)
 
         # handle the case of a direct manifest
         if sublist is None:
@@ -387,20 +376,21 @@ class ImageHandler:
             # check if it's already uploaded
             if self.dst_registry.is_manifest_already_uploaded(digest):
                 logger.info("Manifest was already uploaded")
-                return final_fqu
+                return digest
 
             self._process_manifest(raw_manifest)
-            self.dst_registry.upload_manifest(raw_manifest, original_reference)
-            return final_fqu
+            self.dst_registry.upload_manifest(raw_manifest, reference)
+            return digest
 
         # handle the case of the manifest being actually a list of manifests
         raw_meta_manifest = raw_manifest
+        meta_manifest_digest = digest
         logger.info("Got a multiple manifest (len=%s) with digest %s", len(sublist), digest)
 
         # check if it's already uploaded
         if self.dst_registry.is_manifest_already_uploaded(digest):
             logger.info("Meta-manifest was already uploaded")
-            return final_fqu
+            return digest
 
         for idx, manifest in enumerate(sublist, 1):
             digest = manifest['digest']
@@ -422,17 +412,17 @@ class ImageHandler:
             self.dst_registry.upload_manifest(raw_manifest, digest)
 
         logger.debug("Uploading meta-manifest")
-        self.dst_registry.upload_manifest(
-            raw_meta_manifest, original_reference, multiple_manifest=True)
-        return final_fqu
+        self.dst_registry.upload_manifest(raw_meta_manifest, reference, multiple_manifest=True)
+        return meta_manifest_digest
 
-    def get_destination_url(self, reference):
-        """Get the fully qualified URL in the destination registry for a tag/digest reference."""
+    def get_digest(self, reference):
+        """Get the fully qualified URL in the Canonical's registry for a tag/digest reference."""
+        #fixme: get digest!!
         if not self.dst_registry.is_manifest_already_uploaded(reference):
             raise CommandError(
-                "The {!r} image does not exist in the destination registry".format(reference))
+                "The {!r} image does not exist in the Canonical's registry".format(reference))
 
         # need to actually get the manifest, because this is what we'll end up getting the v2 one
         _, digest, _ = self.dst_registry.get_manifest(reference)
-        final_fqu = self.dst_registry.get_fully_qualified_url(digest)
-        return final_fqu
+        #final_fqu = self.dst_registry.get_fully_qualified_url(digest)
+        return digest

@@ -69,10 +69,6 @@ class _AuthHolder:
     - deal with credentials persistence
 
     - wrap HTTP calls to ensure authentication
-
-    XXX Facundo 2020-06-18: right now for functionality bootstrapping we're storing credentials
-    on disk, we may move to a keyring, wallet, other solution, or firmly remain here when we
-    get a "security" recommendation (related: issue #52).
     """
 
     def __init__(self):
