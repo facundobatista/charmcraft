@@ -307,17 +307,16 @@ class Store:
         result = [_build_resource_revision(item) for item in response['revisions']]
         return result
 
-    def get_oci_registry_credentials(self, charm_name, resource_name):  #FIXME test
+    def get_oci_registry_credentials(self, charm_name, resource_name):
         """Get credentials to upload a resource to the Canonical's OCI Registry."""
         endpoint = '/v1/charm/{}/resources/{}/oci-image/upload-credentials'.format(
             charm_name, resource_name)
         response = self._client.get(endpoint)
-        print("======== credentials response:", repr(response))
         return RegistryCredentials(
             image_name=response['image-name'], username=response['username'],
             password=response['password'])
 
-    def get_oci_image_blob(self, charm_name, resource_name, digest):  #FIXME test
+    def get_oci_image_blob(self, charm_name, resource_name, digest):
         """Get the blob that points to the OCI image in the Canonical's OCI Registry."""
         payload = {'image-digest': digest}
         endpoint = '/v1/charm/{}/resources/{}/oci-image/blob'.format(charm_name, resource_name)
