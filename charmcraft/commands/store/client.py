@@ -195,7 +195,7 @@ class Client:
             messages.append(msg)
         return "Store failure! " + "; ".join(messages)
 
-    def _hit(self, method, urlpath, body=None):
+    def _hit(self, method, urlpath, body=None, parse_json=True):
         """Issue a request to the Store."""
         url = self.api_base_url + urlpath
         logger.debug("Hitting the store: %s %s %s", method, url, body)
@@ -204,19 +204,22 @@ class Client:
             raise CommandError(self._parse_store_error(resp))
 
         logger.debug("Store ok: %s", resp.status_code)
-        # XXX Facundo 2020-06-30: we need to wrap this .json() call, and raise UnknownError (after
-        # logging in debug the received raw response). This would catch weird "html" responses,
-        # for example, without making charmcraft to badly crash. Related: issue #73.
-        data = resp.json()
+        if parse_json:
+            # XXX Facundo 2020-06-30: we need to wrap this .json() call, and raise UnknownError
+            # (after logging in debug the received raw response). This would catch weird "html"
+            # responses, for example, without making charmcraft to badly crash. Related: issue #73.
+            data = resp.json()
+        else:
+            data = resp.text
         return data
 
-    def get(self, urlpath):
+    def get(self, *args, **kwargs):
         """GET something from the Store."""
-        return self._hit('GET', urlpath)
+        return self._hit('GET', *args, **kwargs)
 
-    def post(self, urlpath, body):
+    def post(self, *args, **kwargs):
         """POST a body (json-encoded) to the Store."""
-        return self._hit('POST', urlpath, body)
+        return self._hit('POST', *args, **kwargs)
 
     def push(self, filepath):
         """Push the bytes from filepath to the Storage."""

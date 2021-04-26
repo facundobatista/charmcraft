@@ -2449,12 +2449,13 @@ def test_uploadresource_call_error(caplog, store_mock, config, tmp_path):
 
 
 @pytest.mark.parametrize('source,expected', [
-    ('testname', OCIImageSpec('library', 'testname', 'latest')),
-    ('testorga/testname', OCIImageSpec('testorga', 'testname', 'latest')),
-    ('testname:sometag', OCIImageSpec('library', 'testname', 'sometag')),
-    ('testorga/testname:sometag', OCIImageSpec('testorga', 'testname', 'sometag')),
-    ('testname@somedigest', OCIImageSpec('library', 'testname', 'somedigest')),
-    ('testorga/testname@somedigest', OCIImageSpec('testorga', 'testname', 'somedigest')),
+    ('testname', OCIImageSpec('library/testname', 'latest')),
+    ('testorga/testname', OCIImageSpec('testorga/testname', 'latest')),
+    ('testname:sometag', OCIImageSpec('library/testname', 'sometag')),
+    ('testorga/testname:sometag', OCIImageSpec('testorga/testname', 'sometag')),
+    ('testorga/whatever/yes/testname', OCIImageSpec('testorga/whatever/yes/testname', 'latest')),
+    ('testname@sha256:somehash', OCIImageSpec('library/testname', 'sha256:somehash')),
+    ('testorga/testname@sha256:somehash', OCIImageSpec('testorga/testname', 'sha256:somehash')),
 ])
 def test_uploadresource_ociimagespec_ok(source, expected):
     """Check oci image spec format, different good combinations."""
@@ -2463,17 +2464,12 @@ def test_uploadresource_ociimagespec_ok(source, expected):
 
 
 @pytest.mark.parametrize('source,partial_error_message', [
-    ('testname:tag@digest', "Cannot specify both tag and digest"),
-    ('testname@digest:tag', "Cannot specify both tag and digest"),
-    ('@digest:tag', "Cannot specify both tag and digest"),
     ('', "The image name is mandatory"),
     (':tag', "The image name is mandatory"),
-    ('server/testorga/name', "The registry server cannot be specified as part of the image"),
 ])
 def test_uploadresource_ociimagespec_error(source, partial_error_message):
     """Check oci image spec format, different bad combinations."""
-    error_message = partial_error_message + (
-        " (the format is [organization/]name[:tag|@digest]).")
+    error_message = partial_error_message + " (the format is name[:tag|@digest])."
     with pytest.raises(CommandError) as cm:
         oci_image_spec(source)
     assert str(cm.value) == error_message

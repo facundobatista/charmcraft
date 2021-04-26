@@ -103,7 +103,9 @@ class CharmhubConfig:
     @classmethod
     def from_dict(cls, source):
         """Build from a raw dict."""
-        return cls(**source)
+        return cls(
+            api_url=source.get('api-url'), storage_url=source.get('storage-url'),
+            registry_url=source.get('registry-url'))
 
 
 class BasicPrime(tuple):

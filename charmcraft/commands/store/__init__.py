@@ -40,7 +40,7 @@ from charmcraft.utils import (
 )
 
 from .store import Store
-from .registry import ImageHandler
+from .registry import ImageHandler, OCIRegistry
 
 logger = logging.getLogger('charmcraft.commands.store')
 
@@ -1129,17 +1129,9 @@ class _BadOCIImageSpecError(CommandError):
     def __init__(self, base_error):
         super().__init__(base_error + " (the format is name[:tag|@digest]).")
 
-
 def oci_image_spec(value):
     """Build a full OCI image spec, using defaults for non specified parts."""
-    # this is to support Dockerhub's simple names
-    if '/' not in value:
-        value = 'library/' + value
-
     # get the digest XOR tag
-    if '@' in value and ':' in value:
-        #FIXME: this is wrong with mysql_image@sha256:7e244fae615587335176db07e88b43eee5e4762f35306e17c13c68125d93b9bf
-        raise _BadOCIImageSpecError("Cannot specify both tag and digest")
     if '@' in value:
         name, reference = value.split('@')
     elif ':' in value:
@@ -1150,6 +1142,10 @@ def oci_image_spec(value):
 
     if not name:
         raise _BadOCIImageSpecError("The image name is mandatory")
+
+    # this is to support Dockerhub's simple names
+    if '/' not in name:
+        name = 'library/' + name
     return OCIImageSpec(name=name, reference=reference)
 
 
@@ -1168,7 +1164,7 @@ class UploadResourceCommand(BaseCommand):
         The resource can be a file from your computer (use the '--filepath'
         option) or an OCI Image (use the '--image' option, including a
         '--registry' indication if needed, for example use
-        'registry.hub.docker.com' for DockerHub, the default is
+        'https://registry.hub.docker.com' for DockerHub, the default is
         Canonical's registry).
 
         The OCI image description uses the name[:tag|@digest] form. The
@@ -1219,28 +1215,35 @@ class UploadResourceCommand(BaseCommand):
             logger.debug(  #FIXME: re-test all this
                 "Uploading resource from image %r at %r",
                 parsed_args.image, parsed_args.registry)
+            credentials = store.get_oci_registry_credentials(
+                parsed_args.charm_name, parsed_args.resource_name)
+            dst_image_name = credentials.image_name.split('/', 1)[1]
+
+            # build the image handler
+            if parsed_args.registry is None:
+                src_registry = None
+            else:
+                src_registry = OCIRegistry(parsed_args.registry, parsed_args.image.name)
+            dst_registry = OCIRegistry(
+                self.config.charmhub.registry_url, dst_image_name,
+                credentials.username, credentials.password)
+            ih = ImageHandler(src_registry, dst_registry)
+
             if parsed_args.registry is None:
                 # pointing to an image in the Canonical's registry; just validate
                 # and get its digest
-                ih = ImageHandler(self.config, parsed_args.image_name)
-                digest = ih.get_digest(parsed_args.reference)
+                digest = ih.get_digest(parsed_args.image.reference)
             else:
                 # pointing to an image in other registry, copy from there to Canonical's
-                # registry (need credentials to be able to write there) and use its digest
-                registry_credentials = store.get_oci_registry_credentials(
-                    parsed_args.charm_name, parsed_args.resource_name)
-                print("========= credentials", registry_credentials)
-                ih = ImageHandler(
-                    self.config, parsed_args.image_name, src_registry_url=parsed_args.registry,
-                    dst_registry_credentials=registry_credentials)
+                # registry and use its digest
                 digest = ih.copy_image(parsed_args.image.reference)
+
             logger.debug("Resource digest: %s", digest)
             resource_type = ResourceType.oci_image
 
             # get the blob to upload to Charmhub
             content = store.get_oci_image_blob(
                 parsed_args.charm_name, parsed_args.resource_name, digest)
-            print("====== got json content??", repr(content))
             _, tname = tempfile.mkstemp(prefix='image-resource', suffix='.json')
             resource_filepath = pathlib.Path(tname)
             resource_filepath_is_temp = True

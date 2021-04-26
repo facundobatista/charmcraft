@@ -21,7 +21,6 @@ import hashlib
 import json
 import logging
 import os
-from urllib.parse import urlparse
 from urllib.request import parse_http_list, parse_keqv_list
 
 import requests
@@ -68,16 +67,16 @@ def assert_response_ok(response, expected_status=200):
 class OCIRegistry:
     """Interface to a generic OCI Registry."""
 
-    def __init__(self, server, image_name, credentials=None):
+    def __init__(self, server, image_name, username='', password=''):
         self.server = server
         self.image_name = image_name
         self.auth_token = None
 
-        if credentials is None:
-            self.auth_encoded_credentials = None
-        else:
-            _u_p = "{0.user}:{0.password}".format(credentials)
+        if username:
+            _u_p = "{}:{}".format(username, password) #FIXME test
             self.auth_encoded_credentials = base64.b64encode(_u_p.encode('ascii')).decode('ascii')
+        else:
+            self.auth_encoded_credentials = None
 
     def _authenticate(self, auth_info):
         """Get the auth token."""
@@ -95,7 +94,6 @@ class OCIRegistry:
 
     def _get_url(self, subpath):
         """Build the URL completing the subpath."""
-        #FIXME: understand how this v2 works in the Canonical's registry context
         return "{}/v2/{}/{}".format(self.server, self.image_name, subpath)
 
     def _get_auth_info(self, response):
@@ -106,14 +104,15 @@ class OCIRegistry:
         info = parse_keqv_list(parse_http_list(www_auth[7:]))
         return info
 
-    def _hit(self, method, url, headers=None, **kwargs):
+    def _hit(self, method, url, headers=None, log=True, **kwargs):
         """Hit the specific URL, taking care of the authentication."""
         if headers is None:
             headers = {}
         if self.auth_token is not None:
             headers['Authorization'] = 'Bearer {}'.format(self.auth_token)
 
-        logger.debug("Hitting the registry: %s %s", method, url)
+        if log:  #FIXME test
+            logger.debug("Hitting the registry: %s %s", method, url)
         response = requests.request(method, url, headers=headers, **kwargs)
         if response.status_code == 401:
             # token expired or missing, let's get another one and retry
@@ -127,11 +126,6 @@ class OCIRegistry:
             response = requests.request(method, url, headers=headers, **kwargs)
 
         return response
-
-    def get_fully_qualified_url(self, digest):  #FIXME: ¿esta la queremos?????
-        """Return the fully qualified URL univocally specifying the element in the registry."""
-        parsed_url = urlparse(self.server)
-        return "{}/{}@{}".format(parsed_url.netloc, self.image_name, digest)
 
     def _is_item_already_uploaded(self, url):
         """Verify if a generic item is uploaded."""
@@ -159,6 +153,15 @@ class OCIRegistry:
         """
         logger.debug("Checking if manifest is already uploaded")
         url = self._get_url("manifests/{}".format(reference))
+        return self._is_item_already_uploaded(url)
+
+    def is_blob_already_uploaded(self, reference):
+        """Verify if the blob is already uploaded, using a generic reference.
+
+        If yes, return its digest.
+        """
+        logger.debug("Checking if the blob is already uploaded")
+        url = self._get_url("blobs/{}".format(reference))
         return self._is_item_already_uploaded(url)
 
     def get_manifest(self, reference):
@@ -275,7 +278,7 @@ class OCIRegistry:
                 }
                 progress = 100 * end_position / size
                 print("Uploading.. {:.2f}%\r".format(progress), end='', flush=True)
-                response = self._hit('PATCH', upload_url, headers=headers, data=chunk)
+                response = self._hit('PATCH', upload_url, headers=headers, data=chunk, log=False)
                 assert_response_ok(response, expected_status=202)
 
                 upload_url = response.headers['Location']
@@ -298,20 +301,24 @@ class OCIRegistry:
 class ImageHandler:
     """Provide specific functionalities around images."""
 
-    def __init__(
-            self, config, image_name, *, src_registry_url=None, dst_registry_credentials=None):
+    #def __init__(self, image_name, dst_url, dst_credentials, *, src_url=None):
+    #    self.temp_filepaths = []  # FIXME: delete all this when the process is done
+
+    #    # configure a source registry only if an URL is provided (some functionality here
+    #    # only works with a destination registry)
+    #    if src_url is None:
+    #        self.src_registry = None
+    #    else:
+    #        self.src_registry = OCIRegistry(src_url, image_name)
+
+    #    # configure the destination registry
+    #    #FIXME: note the change here for image name!
+    #    image_name = dst_credentials.image_name.split('/', 1)[1]
+    #    self.dst_registry = OCIRegistry(dst_url, image_name, dst_credentials)
+    def __init__(self, src_registry, dst_registry):
         self.temp_filepaths = []  # FIXME: delete all this when the process is done
-
-        # configure a source registry only if an URL is provided (some functionality here
-        # only works with a destination registry)
-        if src_registry_url is None:
-            self.src_registry = None
-        else:
-            self.src_registry = OCIRegistry(src_registry_url, image_name)
-
-        # configure the destination registry from the configuration URL
-        self.dst_registry = OCIRegistry(
-            config.charmhub.registry_url, image_name, dst_registry_credentials)
+        self.src_registry = src_registry
+        self.dst_registry = dst_registry
 
     def _process_blob(self, blob_size, blob_digest):
         """Download and reupload a blob."""
@@ -420,9 +427,9 @@ class ImageHandler:
         #fixme: get digest!!
         if not self.dst_registry.is_manifest_already_uploaded(reference):
             raise CommandError(
-                "The {!r} image does not exist in the Canonical's registry".format(reference))
+                "The image {!r} with reference {!r} does not exist in the Canonical's "
+                "registry".format(self.dst_registry.image_name, reference))#FIXME test
 
         # need to actually get the manifest, because this is what we'll end up getting the v2 one
         _, digest, _ = self.dst_registry.get_manifest(reference)
-        #final_fqu = self.dst_registry.get_fully_qualified_url(digest)
         return digest
