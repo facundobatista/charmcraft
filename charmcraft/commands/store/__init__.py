@@ -1129,6 +1129,7 @@ class _BadOCIImageSpecError(CommandError):
     def __init__(self, base_error):
         super().__init__(base_error + " (the format is name[:tag|@digest]).")
 
+
 def oci_image_spec(value):
     """Build a full OCI image spec, using defaults for non specified parts."""
     # get the digest XOR tag

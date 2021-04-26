@@ -301,20 +301,6 @@ class OCIRegistry:
 class ImageHandler:
     """Provide specific functionalities around images."""
 
-    #def __init__(self, image_name, dst_url, dst_credentials, *, src_url=None):
-    #    self.temp_filepaths = []  # FIXME: delete all this when the process is done
-
-    #    # configure a source registry only if an URL is provided (some functionality here
-    #    # only works with a destination registry)
-    #    if src_url is None:
-    #        self.src_registry = None
-    #    else:
-    #        self.src_registry = OCIRegistry(src_url, image_name)
-
-    #    # configure the destination registry
-    #    #FIXME: note the change here for image name!
-    #    image_name = dst_credentials.image_name.split('/', 1)[1]
-    #    self.dst_registry = OCIRegistry(dst_url, image_name, dst_credentials)
     def __init__(self, src_registry, dst_registry):
         self.temp_filepaths = []  # FIXME: delete all this when the process is done
         self.src_registry = src_registry
