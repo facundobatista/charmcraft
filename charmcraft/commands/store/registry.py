@@ -67,13 +67,13 @@ def assert_response_ok(response, expected_status=200):
 class OCIRegistry:
     """Interface to a generic OCI Registry."""
 
-    def __init__(self, server, image_name, username='', password=''):
+    def __init__(self, server, image_name, *, username='', password=''):
         self.server = server
         self.image_name = image_name
         self.auth_token = None
 
         if username:
-            _u_p = "{}:{}".format(username, password) #FIXME test
+            _u_p = "{}:{}".format(username, password)
             self.auth_encoded_credentials = base64.b64encode(_u_p.encode('ascii')).decode('ascii')
         else:
             self.auth_encoded_credentials = None
@@ -111,7 +111,7 @@ class OCIRegistry:
         if self.auth_token is not None:
             headers['Authorization'] = 'Bearer {}'.format(self.auth_token)
 
-        if log:  #FIXME test
+        if log:
             logger.debug("Hitting the registry: %s %s", method, url)
         response = requests.request(method, url, headers=headers, **kwargs)
         if response.status_code == 401:
@@ -410,11 +410,10 @@ class ImageHandler:
 
     def get_digest(self, reference):
         """Get the fully qualified URL in the Canonical's registry for a tag/digest reference."""
-        #fixme: get digest!!
         if not self.dst_registry.is_manifest_already_uploaded(reference):
             raise CommandError(
                 "The image {!r} with reference {!r} does not exist in the Canonical's "
-                "registry".format(self.dst_registry.image_name, reference))#FIXME test
+                "registry".format(self.dst_registry.image_name, reference))
 
         # need to actually get the manifest, because this is what we'll end up getting the v2 one
         _, digest, _ = self.dst_registry.get_manifest(reference)
