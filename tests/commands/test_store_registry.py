@@ -500,13 +500,6 @@ def test_():
 
 # -- tests for the ImageHandler 'copy' functionality
 
-def test_():
-    """."""
-    fixme
-
-
-# -- tests for the ImageHandler 'get_destination_url' functionality
-
 @pytest.fixture
 def mocked_imagehandler():
     """Provide an ImageHandler with a mocked registry.
@@ -518,6 +511,55 @@ def mocked_imagehandler():
     with patch.object(im, 'dst_registry', autospec=True):
         yield im
 
+class FakeRegistry:
+    """A fake registry to mimic behaviour of the real one and record actions."""
+    def __init__(self):
+        self.stored_manifests = set()
+        self.uploaded_manifests = []
+
+    def is_manifest_already_uploaded(self, reference):
+        return reference in self.stored_manifests
+
+    def upload_manifest(self, content, reference):
+        self.uploaded_manifests.append((content, reference))
+
+
+def test_imagehandler_copy_single_ok(caplog, mocked_imagehandler):
+    """Simple case of a single manifest to upload ok."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+    src_registry = mocked_imagehandler.src_registry
+    dst_registry = mocked_imagehandler.dst_registry
+
+    # set up fake registries
+    src_registry.get_manifest.return_value = True
+    fixme
+
+    # check the registries were called properly
+    src_registry.get_manifest.assert_called_with('test-reference')
+    dst_registry.is_manifest_already_uploaded.assert_called_with('test-reference')
+    dst_registry.get_manifest.assert_called_with('test-reference')
+
+def test_imagehandler_copy_single_already_uploaded(caplog, mocked_imagehandler):
+    """A single manifest that is already uploaded."""
+    fixme
+
+
+def test_imagehandler_copy_multiple_manifest_ok(caplog, mocked_imagehandler):
+    """A multiple manifest with all sub-manifests to process."""
+    fixme
+
+
+def test_imagehandler_copy_multiple_manifest_partial(caplog, mocked_imagehandler):
+    """A multiple manifest with some sub-manifests already uploaded."""
+    fixme
+
+
+def test_imagehandler_copy_multiple_manifest_already_uploaded(caplog, mocked_imagehandler):
+    """A multiple manifest that is already uploaded."""
+    fixme
+
+
+# -- tests for the ImageHandler 'get_destination_url' functionality
 
 def test_imagehandler_getdigest_ok(mocked_imagehandler):
     """Get the destination URL ok."""
