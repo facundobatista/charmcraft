@@ -20,7 +20,7 @@ import base64
 import io
 import json
 import logging
-from unittest.mock import patch
+from unittest.mock import patch, call
 
 import pytest
 import requests
@@ -498,92 +498,205 @@ def test_():
     fixme
 
 
-# -- tests for the ImageHandler 'copy' functionality
+# -- tests for the ImageHandler functionalities
 
-@pytest.fixture
-def mocked_imagehandler():
-    """Provide an ImageHandler with a mocked registry.
-
-    This is to isolate the use of the registry from the internal behaviour.
-    """
-    dst_registry = OCIRegistry("https://fakereg.com", "test-image")
-    im = ImageHandler(None, dst_registry)
-    with patch.object(im, 'dst_registry', autospec=True):
-        yield im
 
 class FakeRegistry:
     """A fake registry to mimic behaviour of the real one and record actions."""
-    def __init__(self):
-        self.stored_manifests = set()
+    def __init__(self, image_name=None):
+        self.image_name = image_name
+        self.stored_manifests = dict()
         self.uploaded_manifests = []
 
     def is_manifest_already_uploaded(self, reference):
         return reference in self.stored_manifests
 
-    def upload_manifest(self, content, reference):
-        self.uploaded_manifests.append((content, reference))
+    def upload_manifest(self, content, reference, multiple_manifest=False):
+        self.uploaded_manifests.append((content, reference, multiple_manifest))
+
+    def get_manifest(self, reference):
+        return self.stored_manifests[reference]
 
 
-def test_imagehandler_copy_single_ok(caplog, mocked_imagehandler):
+def test_imagehandler_copy_single_ok(caplog):
     """Simple case of a single manifest to upload ok."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")
-    src_registry = mocked_imagehandler.src_registry
-    dst_registry = mocked_imagehandler.dst_registry
 
-    # set up fake registries
-    src_registry.get_manifest.return_value = True
-    fixme
+    # have the manifest only in the source registry
+    fake_src_registry = FakeRegistry()
+    fake_src_registry.stored_manifests['test-reference'] = (None, 'test-digest', 'test-manifest')
+    fake_dst_registry = FakeRegistry()
 
-    # check the registries were called properly
-    src_registry.get_manifest.assert_called_with('test-reference')
-    dst_registry.is_manifest_already_uploaded.assert_called_with('test-reference')
-    dst_registry.get_manifest.assert_called_with('test-reference')
+    im = ImageHandler(fake_src_registry, fake_dst_registry)
+    with patch.object(im, '_process_manifest') as process_manifest_mock:
+        result = im.copy_image('test-reference')
 
-def test_imagehandler_copy_single_already_uploaded(caplog, mocked_imagehandler):
+    assert result == 'test-digest'
+    assert fake_dst_registry.uploaded_manifests == [('test-manifest', 'test-reference', False)]
+    process_manifest_mock.assert_called_once_with('test-manifest')
+
+    expected = [
+        "Got a single manifest with digest test-digest",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+def test_imagehandler_copy_single_already_uploaded(caplog):
     """A single manifest that is already uploaded."""
-    fixme
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    # have the manifest both in the source and destionation registries
+    fake_src_registry = FakeRegistry()
+    fake_src_registry.stored_manifests['test-reference'] = (None, 'test-digest', 'test-manifest')
+    fake_dst_registry = FakeRegistry()
+    fake_dst_registry.stored_manifests['test-digest'] = (None, 'test-digest', 'test-manifest')
+
+    im = ImageHandler(fake_src_registry, fake_dst_registry)
+    with patch.object(im, '_process_manifest') as process_manifest_mock:
+        result = im.copy_image('test-reference')
+
+    assert result == 'test-digest'
+    assert fake_dst_registry.uploaded_manifests == []
+    assert process_manifest_mock.call_count == 0
+
+    expected = [
+        "Got a single manifest with digest test-digest",
+        "Manifest was already uploaded",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
 
 
-def test_imagehandler_copy_multiple_manifest_ok(caplog, mocked_imagehandler):
+def test_imagehandler_copy_multiple_manifest_ok(caplog):
     """A multiple manifest with all sub-manifests to process."""
-    fixme
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    # in source, two simple manifests, and a meta manifest pointing to them; nothing in dest
+    fake_src_registry = FakeRegistry()
+    submanifest1 = dict(digest='test-subdigest-1', platform='test-platform', foo='more stuff')
+    submanifest2 = dict(digest='test-subdigest-2', bar='whatever')
+    fake_src_registry.stored_manifests['test-reference'] = (
+        [submanifest1, submanifest2], 'test-meta-digest', 'test-meta-manifest')
+    fake_src_registry.stored_manifests['test-subdigest-1'] = (
+        None, 'test-subdigest-1', 'test-submanifest-1')
+    fake_src_registry.stored_manifests['test-subdigest-2'] = (
+        None, 'test-subdigest-2', 'test-submanifest-2')
+
+    fake_dst_registry = FakeRegistry()
+
+    im = ImageHandler(fake_src_registry, fake_dst_registry)
+    with patch.object(im, '_process_manifest') as process_manifest_mock:
+        result = im.copy_image('test-reference')
+
+    assert result == 'test-meta-digest'
+    assert fake_dst_registry.uploaded_manifests == [
+        ('test-submanifest-1', 'test-subdigest-1', False),
+        ('test-submanifest-2', 'test-subdigest-2', False),
+        ('test-meta-manifest', 'test-reference', True),
+    ]
+    process_manifest_mock.mock_calls = [
+        call('test-submanifest-1'),
+        call('test-submanifest-2'),
+    ]
+    expected = [
+        "Got a multiple manifest (len=2) with digest test-meta-digest",
+        "Sub-manifest 1/2 for platform test-platform, digest test-subdigest-1",
+        "Downloading manifest",
+        "Sub-manifest 2/2 for platform None, digest test-subdigest-2",
+        "Downloading manifest",
+        "Uploading meta-manifest",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
 
 
-def test_imagehandler_copy_multiple_manifest_partial(caplog, mocked_imagehandler):
+def test_imagehandler_copy_multiple_manifest_partial(caplog):
     """A multiple manifest with some sub-manifests already uploaded."""
-    fixme
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    # in source, two simple manifests, and a meta manifest pointing to them; the first
+    # simple one in the destination registry
+    fake_src_registry = FakeRegistry()
+    submanifest1 = dict(digest='test-subdigest-1', platform='test-platform', foo='more stuff')
+    submanifest2 = dict(digest='test-subdigest-2', bar='whatever')
+    fake_src_registry.stored_manifests['test-reference'] = (
+        [submanifest1, submanifest2], 'test-meta-digest', 'test-meta-manifest')
+    fake_src_registry.stored_manifests['test-subdigest-1'] = (
+        None, 'test-subdigest-1', 'test-submanifest-1')
+    fake_src_registry.stored_manifests['test-subdigest-2'] = (
+        None, 'test-subdigest-2', 'test-submanifest-2')
+
+    fake_dst_registry = FakeRegistry()
+    fake_dst_registry.stored_manifests['test-subdigest-1'] = (
+        None, 'test-subdigest-1', 'test-submanifest-1')
+
+    im = ImageHandler(fake_src_registry, fake_dst_registry)
+    with patch.object(im, '_process_manifest') as process_manifest_mock:
+        result = im.copy_image('test-reference')
+
+    assert result == 'test-meta-digest'
+    assert fake_dst_registry.uploaded_manifests == [
+        ('test-submanifest-2', 'test-subdigest-2', False),
+        ('test-meta-manifest', 'test-reference', True),
+    ]
+    process_manifest_mock.mock_calls = [
+        call('test-submanifest-2'),
+    ]
+    expected = [
+        "Got a multiple manifest (len=2) with digest test-meta-digest",
+        "Sub-manifest 1/2 for platform test-platform, digest test-subdigest-1",
+        "Sub-manifest was already uploaded",
+        "Sub-manifest 2/2 for platform None, digest test-subdigest-2",
+        "Downloading manifest",
+        "Uploading meta-manifest",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
 
 
-def test_imagehandler_copy_multiple_manifest_already_uploaded(caplog, mocked_imagehandler):
+def test_imagehandler_copy_multiple_manifest_already_uploaded(caplog):
     """A multiple manifest that is already uploaded."""
-    fixme
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    # a meta manifest in both in source and destination registries (no need for the real
+    # manifests, as they will not be retrieved/used)
+    fake_src_registry = FakeRegistry()
+    submanifest1 = dict(digest='test-subdigest-1', platform='test-platform', foo='more stuff')
+    submanifest2 = dict(digest='test-subdigest-2', bar='whatever')
+    fake_src_registry.stored_manifests['test-reference'] = (
+        [submanifest1, submanifest2], 'test-meta-digest', 'test-meta-manifest')
+
+    fake_dst_registry = FakeRegistry()
+    fake_dst_registry.stored_manifests['test-meta-digest'] = (
+        [submanifest1, submanifest2], 'test-meta-digest', 'test-meta-manifest')
+
+    im = ImageHandler(fake_src_registry, fake_dst_registry)
+    with patch.object(im, '_process_manifest') as process_manifest_mock:
+        result = im.copy_image('test-reference')
+
+    assert result == 'test-meta-digest'
+    assert fake_dst_registry.uploaded_manifests == []
+    process_manifest_mock.mock_calls = []
+    expected = [
+        "Got a multiple manifest (len=2) with digest test-meta-digest",
+        "Meta-manifest was already uploaded",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
 
 
-# -- tests for the ImageHandler 'get_destination_url' functionality
-
-def test_imagehandler_getdigest_ok(mocked_imagehandler):
+def test_imagehandler_getdigest_ok():
     """Get the destination URL ok."""
-    dst_registry = mocked_imagehandler.dst_registry
-    dst_registry.is_manifest_already_uploaded.return_value = True
+    fake_dst_registry = FakeRegistry()
+    fake_dst_registry.stored_manifests['test-reference'] = (None, 'test-digest', 'test-manifest')
 
-    manifest_info = 'dontcare', 'test-digest', 'dontcare'  # (sublist, digest, raw_manifest)
-    dst_registry.get_manifest.return_value = manifest_info
+    im = ImageHandler(None, fake_dst_registry)
+    result = im.get_digest('test-reference')
 
-    # call and check final result
-    result = mocked_imagehandler.get_digest('test-reference')
     assert result == 'test-digest'
 
-    # check the registry was called properly
-    dst_registry.is_manifest_already_uploaded.assert_called_with('test-reference')
-    dst_registry.get_manifest.assert_called_with('test-reference')
 
-
-def test_imagehandler_getdigest_missing(mocked_imagehandler):
+def test_imagehandler_getdigest_missing():
     """The indicated reference does not exist in the registry."""
-    mocked_imagehandler.dst_registry.image_name = 'test-image'
-    mocked_imagehandler.dst_registry.is_manifest_already_uploaded.return_value = False
+    im = ImageHandler(None, FakeRegistry('test-image'))
     expected_error = (
         "The image 'test-image' with reference 'test-reference' does not exist in "
         "the Canonical's registry")
     with pytest.raises(CommandError, match=expected_error):
-        mocked_imagehandler.get_digest('test-reference')
+        im.get_digest('test-reference')
