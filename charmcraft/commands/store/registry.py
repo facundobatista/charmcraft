@@ -342,9 +342,10 @@ class ImageHandler:
         logger.debug("Processing manifest version %r", manifest.get('schemaVersion'))
 
         # download the config blob
-        blob = manifest['config']
-        logger.debug("Found config blob")
-        self._process_blob(blob['size'], blob['digest'])
+        blob = manifest.get('config')
+        if blob is not None:
+            logger.debug("Found config blob")
+            self._process_blob(blob['size'], blob['digest'])
 
         # and all the layers
         layers = manifest['layers']

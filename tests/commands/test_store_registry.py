@@ -28,6 +28,7 @@ import requests
 from charmcraft.cmdbase import CommandError
 from charmcraft.commands.store.registry import (
     ImageHandler,
+    LAYER_MIMETYPE,
     MANIFEST_LISTS,
     MANIFEST_V2_MIMETYPE,
     OCIRegistry,
@@ -493,14 +494,6 @@ def test_():
 
 # -- tests for the ImageHandler blob and manifest processing
 
-def test_():
-    """."""
-    fixme
-
-
-# -- tests for the ImageHandler functionalities
-
-
 class FakeRegistry:
     """A fake registry to mimic behaviour of the real one and record actions."""
     def __init__(self, image_name=None):
@@ -517,6 +510,120 @@ class FakeRegistry:
     def get_manifest(self, reference):
         return self.stored_manifests[reference]
 
+
+def test_():
+    """."""
+    fixme
+
+
+def test_imagehandler_process_manifest_simple(caplog):
+    """Process a simple manifest."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    raw_manifest = json.dumps({
+        'schemaVersion': 2,
+        'config': {
+            'size': 123,
+            'digest': 'test-digest-config',
+        },
+        'layers': [
+            {
+                'mediaType': LAYER_MIMETYPE,
+                'size': 456,
+                'digest': 'test-digest-layer-1',
+            }, {
+                'mediaType': LAYER_MIMETYPE,
+                'size': 789,
+                'digest': 'test-digest-layer-2',
+            },
+        ],
+    })
+    im = ImageHandler(None, FakeRegistry())
+    with patch.object(im, "_process_blob") as process_blob_mock:
+        im._process_manifest(raw_manifest)
+
+    process_blob_mock.mock_calls = [
+        call(123, "test-digest-config"),
+        call(456, "test-digest-layer-1"),
+        call(789, "test-digest-layer-2"),
+    ]
+    expected = [
+        "Processing manifest version 2",
+        "Found config blob",
+        "Found layer blob 1/2",
+        "Found layer blob 2/2",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+def test_imagehandler_process_manifest_including_no_config(caplog):
+    """Process a manifest without a config field."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    raw_manifest = json.dumps({
+        'schemaVersion': 2,
+        'layers': [
+            {
+                'mediaType': LAYER_MIMETYPE,
+                'size': 111,
+                'digest': 'test-digest-layer',
+            },
+        ],
+    })
+    im = ImageHandler(None, FakeRegistry())
+    with patch.object(im, "_process_blob") as process_blob_mock:
+        im._process_manifest(raw_manifest)
+
+    process_blob_mock.mock_calls = [
+        call(111, "test-digest-layer"),
+    ]
+    expected = [
+        "Processing manifest version 2",
+        "Found layer blob 1/1",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+def test_imagehandler_process_manifest_including_no_layers(caplog):
+    """Process a manifest that includes non-layer items."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    raw_manifest = json.dumps({
+        'schemaVersion': 2,
+        'config': {
+            'size': 123,
+            'digest': 'test-digest-config',
+        },
+        'layers': [
+            {
+                'mediaType': LAYER_MIMETYPE,
+                'size': 456,
+                'digest': 'test-digest-layer-1',
+            }, {
+                'mediaType': "strange-layer",
+                'unknown': 'fields',
+            },
+        ],
+    })
+    im = ImageHandler(None, FakeRegistry())
+    with patch.object(im, "_process_blob") as process_blob_mock:
+        im._process_manifest(raw_manifest)
+
+    process_blob_mock.mock_calls = [
+        call(123, "test-digest-config"),
+        call(456, "test-digest-layer-1"),
+    ]
+    expected = [
+        "Processing manifest version 2",
+        "Found config blob",
+        "Found layer blob 1/2",
+        "Found layer blob 2/2",
+        "Ignoring layer: {'mediaType': 'strange-layer', 'unknown': 'fields'}"
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+# -- tests for the ImageHandler functionalities
 
 def test_imagehandler_copy_single_ok(caplog):
     """Simple case of a single manifest to upload ok."""
