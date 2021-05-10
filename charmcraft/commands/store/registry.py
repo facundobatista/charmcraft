@@ -41,7 +41,7 @@ JSON_RELATED_MIMETYPES = {
 }
 
 # downloads and uploads happen in chunks
-CHUNK_SIZE = 2 ** 20  # 65536
+CHUNK_SIZE = 2 ** 20
 
 
 def assert_response_ok(response, expected_status=200):
