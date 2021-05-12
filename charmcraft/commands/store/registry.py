@@ -17,13 +17,17 @@
 """Module to work with OCI registries."""
 
 import base64
+import gzip
 import hashlib
 import json
 import logging
 import os
+import tarfile
+import tempfile
 from urllib.request import parse_http_list, parse_keqv_list
 
 import requests
+import requests_unixsocket
 
 from charmcraft.cmdbase import CommandError
 
@@ -47,7 +51,8 @@ CHUNK_SIZE = 2 ** 20
 def assert_response_ok(response, expected_status=200):
     """Assert the response is ok."""
     if response.status_code != expected_status:
-        if response.headers.get('Content-Type') in JSON_RELATED_MIMETYPES:
+        ct = response.headers.get('Content-Type', '')
+        if ct.split(';')[0] in JSON_RELATED_MIMETYPES:
             errors = response.json().get('errors')
         else:
             errors = None
@@ -198,7 +203,7 @@ class OCIRegistry:
             digest = response.headers['Docker-Content-Digest']
         return (None, digest, response.text)
 
-    def upload_manifest(self, manifest, reference, *, multiple_manifest=False):
+    def upload_manifest(self, manifest_data, reference, *, multiple_manifest=False):
         """Upload a manifest."""
         mimetype = MANIFEST_LISTS if multiple_manifest else MANIFEST_V2_MIMETYPE
         url = self._get_url("manifests/{}".format(reference))
@@ -206,7 +211,7 @@ class OCIRegistry:
             'Content-Type': mimetype,
         }
         logger.debug("Uploading manifest with reference %s", reference)
-        response = self._hit('PUT', url, headers=headers, data=manifest.encode('utf8'))
+        response = self._hit('PUT', url, headers=headers, data=manifest_data.encode('utf8'))
         assert_response_ok(response, expected_status=201)
         logger.debug("Manifest uploaded OK")
 
@@ -301,113 +306,9 @@ class OCIRegistry:
 class ImageHandler:
     """Provide specific functionalities around images."""
 
-    def __init__(self, src_registry, dst_registry):
+    def __init__(self, registry):
         self.temp_filepaths = []  # FIXME: delete all this when the process is done
-        self.src_registry = src_registry
-        self.dst_registry = dst_registry
-
-    def _process_blob(self, blob_size, blob_digest):
-        """Download and reupload a blob."""
-        logger.debug("Processing blob, size=%s, digest=%s", blob_size, blob_digest)
-
-        # if it's already uploaded, nothing to do
-        if self.dst_registry.is_blob_already_uploaded(blob_digest):
-            logger.debug("Blob was already uploaded")
-            return
-
-        # don't need to re-download the blog if the file for it is there and with correct digest
-        logger.debug("Verify if we need to download it")
-        blob_filepath = '/tmp/{}.bin'.format(blob_digest)  # FIXME: find a better location for this
-        self.temp_filepaths.append(blob_filepath)
-        need_to_download = True
-        if os.path.exists(blob_filepath):
-            with open(blob_filepath, 'rb') as fh:
-                hasher = hashlib.sha256(fh.read())
-            digest = 'sha256:{}'.format(hasher.hexdigest())
-            if blob_digest == digest:
-                need_to_download = False
-
-        if need_to_download:
-            self.src_registry.download_blob(blob_filepath, blob_size, blob_digest)
-
-        # upload
-        self.dst_registry.upload_blob(blob_filepath, blob_size, blob_digest)
-
-    def _process_manifest(self, raw_manifest):
-        """Process a v2 schema 2 manifest.
-
-        https://docs.docker.com/registry/spec/manifest-v2-2/
-        """
-        manifest = json.loads(raw_manifest)
-        logger.debug("Processing manifest version %r", manifest.get('schemaVersion'))
-
-        # download the config blob
-        blob = manifest.get('config')
-        if blob is not None:
-            logger.debug("Found config blob")
-            self._process_blob(blob['size'], blob['digest'])
-
-        # and all the layers
-        layers = manifest['layers']
-        for idx, blob in enumerate(layers, 1):
-            logger.debug("Found layer blob %s/%s", idx, len(layers))
-            if blob['mediaType'] != LAYER_MIMETYPE:
-                logger.debug("Ignoring layer: %s", blob)
-                continue
-            self._process_blob(blob['size'], blob['digest'])
-
-    def copy_image(self, reference):
-        """Copy an image from source registry to destination registry."""
-        # get the manifest or manifests; we cannot check before if the original reference is
-        # already in the destination registry, as the reference may be a tag pointing to a
-        # different image (so we need the digest from the source registry)
-        (sublist, digest, raw_manifest) = self.src_registry.get_manifest(reference)
-
-        # handle the case of a direct manifest
-        if sublist is None:
-            logger.info("Got a single manifest with digest %s", digest)
-
-            # check if it's already uploaded
-            if self.dst_registry.is_manifest_already_uploaded(digest):
-                logger.info("Manifest was already uploaded")
-                return digest
-
-            self._process_manifest(raw_manifest)
-            self.dst_registry.upload_manifest(raw_manifest, reference)
-            return digest
-
-        # handle the case of the manifest being actually a list of manifests
-        raw_meta_manifest = raw_manifest
-        meta_manifest_digest = digest
-        logger.info("Got a multiple manifest (len=%s) with digest %s", len(sublist), digest)
-
-        # check if it's already uploaded
-        if self.dst_registry.is_manifest_already_uploaded(digest):
-            logger.info("Meta-manifest was already uploaded")
-            return digest
-
-        for idx, manifest in enumerate(sublist, 1):
-            digest = manifest['digest']
-            logger.info(
-                "Sub-manifest %s/%s for platform %s, digest %s",
-                idx, len(sublist), manifest.get('platform'), digest)
-
-            # check if it's already uploaded
-            if self.dst_registry.is_manifest_already_uploaded(digest):
-                logger.info("Sub-manifest was already uploaded")
-                continue
-
-            # download
-            logger.info("Downloading manifest")
-            (_, _, raw_manifest) = self.src_registry.get_manifest(digest)
-
-            # process and upload
-            self._process_manifest(raw_manifest)
-            self.dst_registry.upload_manifest(raw_manifest, digest)
-
-        logger.debug("Uploading meta-manifest")
-        self.dst_registry.upload_manifest(raw_meta_manifest, reference, multiple_manifest=True)
-        return meta_manifest_digest
+        self.registry = registry
 
     def get_digest(self, reference):
         """Get the fully qualified URL in the Canonical's registry for a tag/digest reference."""
@@ -418,4 +319,132 @@ class ImageHandler:
 
         # need to actually get the manifest, because this is what we'll end up getting the v2 one
         _, digest, _ = self.dst_registry.get_manifest(reference)
+        return digest
+
+    def check_in_registry(self, digest):
+        """Verify if the image is present in the registry."""
+        return self.registry.is_manifest_already_uploaded(digest)
+
+    def _extract_file(self, image_tar, name, compress=False):
+        """Extract a file from the tar and return its info. Optionally, gzip the content."""
+        logger.debug("Extracting file %s from local tar (compress=%s)", name, compress)
+        src_fh = image_tar.extractfile(name)
+        mtime = image_tar.getmember(name).mtime
+
+        tmp_file = tempfile.NamedTemporaryFile(mode='wb', delete=False)
+        tmp_filepath = tmp_file.name
+        if compress:
+            # open the zip file using the temporary file handler; use the original name and time
+            # as 'filename' and 'mtime' correspondingly as those go to the gzip headers,
+            # to ensure same final hash across different runs
+            orig_filehandler = tmp_file.file
+            dst_filehandler = gzip.GzipFile(
+                fileobj=tmp_file.file, mode='wb', filename=os.path.basename(name), mtime=mtime)
+        else:
+            orig_filehandler = None
+            dst_filehandler = tmp_file.file
+        while True:
+            chunk = src_fh.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            dst_filehandler.write(chunk)
+        dst_filehandler.close()
+        if orig_filehandler is not None:
+            # gzip does not automatically close the underlaying file handler
+            orig_filehandler.close()
+
+        # read the file again to hash it
+        # XXX Facundo 2021-05-10: we could make a special object that will act as a file to
+        # GZip and hash while GZip is writing, to avoid this extra reading
+        total = 0
+        hasher = hashlib.sha256()
+        with open(tmp_filepath, 'rb') as fh:
+            while True:
+                chunk = fh.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                total += len(chunk)
+        digest = 'sha256:{}'.format(hasher.hexdigest())
+
+        return tmp_filepath, total, digest
+
+    def _upload_blob(self, filepath, size, digest):
+        """Upload the blob (if necessary)."""
+        logger.debug("Uploading blob, size=%s, digest=%s", size, digest)
+
+        # if it's already uploaded, nothing to do
+        if self.registry.is_blob_already_uploaded(digest):
+            logger.debug("Blob was already uploaded")
+        else:
+            self.registry.upload_blob(filepath, size, digest)
+
+        # finally remove the temp filepath
+        os.unlink(filepath)
+
+    def upload_from_local(self, digest):
+        """Upload the image from the local registry."""
+        session = requests_unixsocket.Session()
+        base_url = 'http+unix://%2Fvar%2Frun%2Fdocker.sock'
+
+        # validate the image is present locally
+        logger.debug("Checking image is present locally")
+        response = session.get(base_url + '/images/{}/json'.format(digest))
+        if response.status_code == 200:
+            # image is there, we're fine
+            pass
+        elif response.status_code == 404:
+            # image not found (known error)
+            return
+        else:
+            logger.debug("Bad response when validation local image: %s", response.status_code)
+            return
+        local_image_size = response.json()['Size']
+
+        logger.debug("Getting the image from the local repo")
+        response = session.get(base_url + '/images/{}/get'.format(digest), stream=True)
+        filepath = '/tmp/testlocaldocker.bin'  # FIXME: better tmp?
+        extracted_total = 0
+        with open(filepath, 'wb') as fh:
+            for chunk in response.iter_content(2 ** 20):
+                extracted_total += len(chunk)
+                progress = 100 * extracted_total / local_image_size
+                print("Extracting... {:.2f}%\r".format(progress), end='', flush=True)
+                fh.write(chunk)
+
+        # open the image tar and inspect it to get the config and layers for the manifest
+        image_tar = tarfile.open(filepath)
+        local_manifest = json.load(image_tar.extractfile('manifest.json'))
+        (local_manifest,) = local_manifest  # FIXME: what?
+        config_name = local_manifest.get('Config')
+        layer_names = local_manifest['Layers']
+        manifest = {
+            'mediaType': 'application/vnd.docker.distribution.manifest.v2+json',
+            'schemaVersion': 2,
+        }
+
+        if config_name is not None:
+            fpath, size, digest = self._extract_file(image_tar, config_name)
+            self._upload_blob(fpath, size, digest)
+            manifest['config'] = {
+                'digest': digest,
+                'mediaType': 'application/vnd.docker.container.image.v1+json',
+                'size': size,
+            }
+
+        manifest['layers'] = manifest_layers = []
+        for layer_name in layer_names:
+            fpath, size, digest = self._extract_file(image_tar, layer_name, compress=True)
+            self._upload_blob(fpath, size, digest)
+            manifest_layers.append({
+                'digest': digest,
+                'mediaType': 'application/vnd.docker.image.rootfs.diff.tar.gzip',
+                'size': size,
+            })
+
+        # upload the manifest
+        print("======= uploading manifest", manifest)
+        manifest_data = json.dumps(manifest)
+        digest = 'sha256:{}'.format(hashlib.sha256(manifest_data.encode('utf8')).hexdigest())
+        self.registry.upload_manifest(manifest_data, digest)
         return digest

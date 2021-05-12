@@ -148,9 +148,9 @@ CONFIG_SCHEMA = {
         'charmhub': {
             'type': 'object',
             'properties': {
-                'api-url': {'type': 'string', 'format': 'url'},
-                'storage-url': {'type': 'string', 'format': 'url'},
-                'registry-url': {'type': 'string', 'format': 'url'},
+                'api_url': {'type': 'string', 'format': 'url'},
+                'storage_url': {'type': 'string', 'format': 'url'},
+                'registry_url': {'type': 'string', 'format': 'url'},
             },
             'additionalProperties': False,
         },
