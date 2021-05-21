@@ -71,16 +71,6 @@ class BaseCommand:
         If this method is not overriden, the command will not have any parameters.
         """
 
-    def parsed_args_post_verification(self, parser, parsed_args):
-        """Verify any corner case that can not be expressed with argparse.
-
-        It's optional, override only if need to flag any arguments combination that is
-        not allowed.
-
-        In that case, call `parser.error(message)` to make the argparse machinery to
-        show the error in the normal structured way.
-        """
-
     def run(self, parsed_args):
         """Execute command's actual functionality.
 

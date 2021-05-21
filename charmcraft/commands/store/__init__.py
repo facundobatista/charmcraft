@@ -50,7 +50,6 @@ ResourceType = namedtuple("ResourceType", "file oci_image")(file="file", oci_ima
 
 LibData = namedtuple(
     'LibData', 'lib_id api patch content content_hash full_name path lib_name charm_name')
-#OCIImageSpec = namedtuple('OCIImageSpec', 'name reference')
 
 # The token used in the 'init' command (as bytes for easier comparison)
 INIT_TEMPLATE_TOKEN = b"TEMPLATE-TODO"
@@ -1123,33 +1122,6 @@ class ListResourcesCommand(BaseCommand):
             logger.info(line)
 
 
-class _BadOCIImageSpecError(CommandError):
-    """Subclass to provide a specific error for a bad OCI Image specification."""
-
-    def __init__(self, base_error):
-        super().__init__(base_error + " (the format is name[:tag|@digest]).")
-
-
-#def oci_image_spec(value):
-#    """Build a full OCI image spec, using defaults for non specified parts."""
-#    # get the digest XOR tag
-#    if '@' in value:
-#        name, reference = value.split('@')
-#    elif ':' in value:
-#        name, reference = value.split(':')
-#    else:
-#        name = value
-#        reference = 'latest'
-#
-#    if not name:
-#        raise _BadOCIImageSpecError("The image name is mandatory")
-#
-#    # this is to support Dockerhub's simple names
-#    if '/' not in name:
-#        name = 'library/' + name
-#    return OCIImageSpec(name=name, reference=reference)
-
-
 class UploadResourceCommand(BaseCommand):
     """Upload a resource to Charmhub."""
 
@@ -1189,15 +1161,8 @@ class UploadResourceCommand(BaseCommand):
             '--filepath', type=SingleOptionEnsurer(useful_filepath),
             help="The file path of the resource content to upload")
         group.add_argument(
-        # FIXME: test format
             '--image', type=SingleOptionEnsurer(str),
             help="The digest of the local OCI image")
-        # FIXME: test no more registry
-        parser.add_argument(
-            '--registry', type=SingleOptionEnsurer(str),
-            help="The file path of the resource content to upload")
-
-        # FIXME: remove all infra for "post-check"
 
     def run(self, parsed_args):
         """Run the command."""
@@ -1209,7 +1174,6 @@ class UploadResourceCommand(BaseCommand):
             resource_type = ResourceType.file
             logger.debug("Uploading resource directly from file %s", resource_filepath)
         elif parsed_args.image:
-            #FIXME: re-test all this
             image_digest = parsed_args.image
             credentials = store.get_oci_registry_credentials(
                 parsed_args.charm_name, parsed_args.resource_name)
@@ -1224,7 +1188,6 @@ class UploadResourceCommand(BaseCommand):
 
             # check if the specific image is already in Canonical's registry
             already_uploaded = ih.check_in_registry(image_digest)
-            #FIXME: add support for "short digest"
             if already_uploaded:
                 logger.info("Using OCI image from Canonical's registry")
             else:
@@ -1245,7 +1208,6 @@ class UploadResourceCommand(BaseCommand):
             resource_filepath = pathlib.Path(tname)
             resource_filepath_is_temp = True
             resource_filepath.write_text(content)
-            print("============= SUPERJSON", content)
             resource_type = ResourceType.oci_image
 
         result = store.upload_resource(

@@ -388,6 +388,7 @@ class ImageHandler:
         base_url = 'http+unix://%2Fvar%2Frun%2Fdocker.sock'
 
         # validate the image is present locally
+        #FIXME: add support for "short digest"
         logger.debug("Checking image is present locally")
         response = session.get(base_url + '/images/{}/json'.format(digest))
         if response.status_code == 200:
