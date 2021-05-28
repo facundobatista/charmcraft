@@ -29,18 +29,18 @@ from tests.test_infra import pep8_test, get_python_filepaths, pep257_test
 
 
 def test_init_pep257(tmp_path, config):
-    cmd = InitCommand('group', config)
-    cmd.run(Namespace(name='my-charm', author='J Doe', series='k8s', force=False))
+    cmd = InitCommand("group", config)
+    cmd.run(Namespace(name="my-charm", author="J Doe", series="k8s", force=False))
     paths = get_python_filepaths(roots=[str(tmp_path / "src")], python_paths=[])
     pep257_test(paths)
 
 
 def test_init_pep8(tmp_path, config, *, author="J Doe"):
-    cmd = InitCommand('group', config)
-    cmd.run(Namespace(name='my-charm', author=author, series='k8s', force=False))
+    cmd = InitCommand("group", config)
+    cmd.run(Namespace(name="my-charm", author=author, series="k8s", force=False))
     paths = get_python_filepaths(
-        roots=[str(tmp_path / "src"), str(tmp_path / "tests")],
-        python_paths=[])
+        roots=[str(tmp_path / "src"), str(tmp_path / "tests")], python_paths=[]
+    )
     pep8_test(paths)
 
 
@@ -49,8 +49,10 @@ def test_init_non_ascii_author(tmp_path, config):
 
 
 def test_all_the_files(tmp_path, config):
-    cmd = InitCommand('group', config)
-    cmd.run(Namespace(name='my-charm', author="ಅಪರಿಚಿತ ವ್ಯಕ್ತಿ", series='k8s', force=False))
+    cmd = InitCommand("group", config)
+    cmd.run(
+        Namespace(name="my-charm", author="ಅಪರಿಚಿತ ವ್ಯಕ್ತಿ", series="k8s", force=False)
+    )
     assert sorted(str(p.relative_to(tmp_path)) for p in tmp_path.glob("**/*")) == [
         ".flake8",
         ".jujuignore",
@@ -71,29 +73,31 @@ def test_all_the_files(tmp_path, config):
 
 
 def test_force(tmp_path, config):
-    cmd = InitCommand('group', config)
-    tmp_file = tmp_path / 'README.md'
-    with tmp_file.open('w') as f:
-        f.write('This is a nonsense readme')
-    cmd.run(Namespace(name='my-charm', author="ಅಪರಿಚಿತ ವ್ಯಕ್ತಿ", series='k8s', force=True))
+    cmd = InitCommand("group", config)
+    tmp_file = tmp_path / "README.md"
+    with tmp_file.open("w") as f:
+        f.write("This is a nonsense readme")
+    cmd.run(
+        Namespace(name="my-charm", author="ಅಪರಿಚಿತ ವ್ಯಕ್ತಿ", series="k8s", force=True)
+    )
 
     # Check that init ran
-    assert (tmp_path / 'LICENSE').exists()
+    assert (tmp_path / "LICENSE").exists()
 
     # Check that init did not overwrite files
-    with tmp_file.open('r') as f:
-        assert f.read() == 'This is a nonsense readme'
+    with tmp_file.open("r") as f:
+        assert f.read() == "This is a nonsense readme"
 
 
 def test_bad_name(config):
-    cmd = InitCommand('group', config)
+    cmd = InitCommand("group", config)
     with pytest.raises(CommandError):
-        cmd.run(Namespace(name='1234', author="שראלה ישראל", series='k8s', force=False))
+        cmd.run(Namespace(name="1234", author="שראלה ישראל", series="k8s", force=False))
 
 
 def test_executables(tmp_path, config):
-    cmd = InitCommand('group', config)
-    cmd.run(Namespace(name='my-charm', author="홍길동", series='k8s', force=False))
+    cmd = InitCommand("group", config)
+    cmd.run(Namespace(name="my-charm", author="홍길동", series="k8s", force=False))
     assert (tmp_path / "run_tests").stat().st_mode & S_IXALL == S_IXALL
     assert (tmp_path / "src/charm.py").stat().st_mode & S_IXALL == S_IXALL
 
@@ -103,36 +107,36 @@ def test_tests(tmp_path, config):
     # virtualenv libs and bins (if any), as they need them, but we're not creating a
     # venv for the local tests (note that for CI doesn't use a venv)
     env = os.environ.copy()
-    env_paths = [p for p in sys.path if 'env/lib/python' in p]
+    env_paths = [p for p in sys.path if "env/lib/python" in p]
     if env_paths:
-        if 'PYTHONPATH' in env:
-            env['PYTHONPATH'] += ':' + ':'.join(env_paths)
+        if "PYTHONPATH" in env:
+            env["PYTHONPATH"] += ":" + ":".join(env_paths)
         else:
-            env['PYTHONPATH'] = ':'.join(env_paths)
+            env["PYTHONPATH"] = ":".join(env_paths)
         for path in env_paths:
-            bin_path = path[:path.index('env/lib/python')] + 'env/bin'
-            env['PATH'] = bin_path + ':' + env['PATH']
+            bin_path = path[: path.index("env/lib/python")] + "env/bin"
+            env["PATH"] = bin_path + ":" + env["PATH"]
 
-    cmd = InitCommand('group', config)
-    cmd.run(Namespace(name='my-charm', author="だれだれ", series='k8s', force=False))
+    cmd = InitCommand("group", config)
+    cmd.run(Namespace(name="my-charm", author="だれだれ", series="k8s", force=False))
 
     subprocess.run(["./run_tests"], cwd=str(tmp_path), check=True, env=env)
 
 
 def test_series_defaults(tmp_path, config):
     """Check that series defaults to kubernetes including a TODO message."""
-    cmd = InitCommand('group', config)
+    cmd = InitCommand("group", config)
     # series default comes from the parsing itself
-    cmd.run(Namespace(name='my-charm', author="fred", series=None, force=False))
+    cmd.run(Namespace(name="my-charm", author="fred", series=None, force=False))
 
     # verify the value is correct at a YAML level
     metadata_filepath = tmp_path / "metadata.yaml"
     metadata = yaml.safe_load(metadata_filepath.read_text())
-    assert metadata.get("series") == ['kubernetes']
+    assert metadata.get("series") == ["kubernetes"]
 
     # verify a TODO is added at a text level
-    for line in metadata_filepath.open('rt'):
-        if line.startswith('series'):
+    for line in metadata_filepath.open("rt"):
+        if line.startswith("series"):
             assert "# TEMPLATE-TODO" in line
             break
     else:
@@ -140,9 +144,11 @@ def test_series_defaults(tmp_path, config):
 
 
 def test_manual_overrides_defaults(tmp_path, config):
-    cmd = InitCommand('group', config)
-    cmd.run(Namespace(name='my-charm', author="fred", series='xenial,precise', force=False))
+    cmd = InitCommand("group", config)
+    cmd.run(
+        Namespace(name="my-charm", author="fred", series="xenial,precise", force=False)
+    )
 
     with (tmp_path / "metadata.yaml").open("rt", encoding="utf8") as f:
         metadata = yaml.safe_load(f)
-    assert metadata.get("series") == ['xenial', 'precise']
+    assert metadata.get("series") == ["xenial", "precise"]

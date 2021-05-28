@@ -70,30 +70,38 @@ class InitCommand(BaseCommand):
     def fill_parser(self, parser):
         """Specify command's specific parameters."""
         parser.add_argument(
-            "--name",
-            help="The name of the charm; defaults to the directory name")
+            "--name", help="The name of the charm; defaults to the directory name"
+        )
         parser.add_argument(
             "--author",
-            help="The charm author; defaults to the current user name per GECOS")
+            help="The charm author; defaults to the current user name per GECOS",
+        )
         parser.add_argument(
             "--series",
             help=(
                 "A comma-separated list of supported platform series; "
-                "defaults to 'kubernetes' with a reminder to change it"))
+                "defaults to 'kubernetes' with a reminder to change it"
+            ),
+        )
         parser.add_argument(
-            "-f", "--force", action="store_true",
-            help="Initialize even if the directory is not empty (will not overwrite files)")
+            "-f",
+            "--force",
+            action="store_true",
+            help="Initialize even if the directory is not empty (will not overwrite files)",
+        )
 
     def run(self, args):
         """Execute command's actual functionality."""
         if any(self.config.project.dirpath.iterdir()) and not args.force:
             raise CommandError(
-                "{} is not empty (consider using --force to work on nonempty directories)"
-                .format(self.config.project.dirpath))
+                "{} is not empty (consider using --force to work on nonempty directories)".format(
+                    self.config.project.dirpath
+                )
+            )
         logger.debug("Using project directory '%s'", self.config.project.dirpath)
 
         if args.author is None:
-            gecos = pwd.getpwuid(os.getuid()).pw_gecos.split(',', 1)[0]
+            gecos = pwd.getpwuid(os.getuid()).pw_gecos.split(",", 1)[0]
             if not gecos:
                 raise CommandError("Author not given, and nothing in GECOS field")
             logger.debug("Setting author to %r from GECOS field", gecos)
@@ -119,7 +127,7 @@ class InitCommand(BaseCommand):
             "series": series,
         }
 
-        env = get_templates_environment('init')
+        env = get_templates_environment("init")
 
         _todo_rx = re.compile("TODO: (.*)")
         todos = []

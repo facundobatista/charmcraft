@@ -35,57 +35,63 @@ from charmcraft.cmdbase import CommandError
 logger = logging.getLogger(__name__)
 
 # some mimetypes
-CONFIG_MIMETYPE = 'application/vnd.docker.container.image.v1+json'
-MANIFEST_LISTS = 'application/vnd.docker.distribution.manifest.list.v2+json'
-MANIFEST_V2_MIMETYPE = 'application/vnd.docker.distribution.manifest.v2+json'
-LAYER_MIMETYPE = 'application/vnd.docker.image.rootfs.diff.tar.gzip'
+CONFIG_MIMETYPE = "application/vnd.docker.container.image.v1+json"
+MANIFEST_LISTS = "application/vnd.docker.distribution.manifest.list.v2+json"
+MANIFEST_V2_MIMETYPE = "application/vnd.docker.distribution.manifest.v2+json"
+LAYER_MIMETYPE = "application/vnd.docker.image.rootfs.diff.tar.gzip"
 JSON_RELATED_MIMETYPES = {
-    'application/json',
-    'application/vnd.docker.distribution.manifest.v1+prettyjws',  # signed manifest
+    "application/json",
+    "application/vnd.docker.distribution.manifest.v1+prettyjws",  # signed manifest
     MANIFEST_LISTS,
     MANIFEST_V2_MIMETYPE,
 }
-OCTET_STREAM_MIMETYPE = 'application/octet-stream'
+OCTET_STREAM_MIMETYPE = "application/octet-stream"
 
 # downloads and uploads happen in chunks
 CHUNK_SIZE = 2 ** 20
 
 # the address of the dockerd socket
-LOCAL_DOCKER_BASE_URL = 'http+unix://%2Fvar%2Frun%2Fdocker.sock'
+LOCAL_DOCKER_BASE_URL = "http+unix://%2Fvar%2Frun%2Fdocker.sock"
 
 
 def assert_response_ok(response, expected_status=200):
     """Assert the response is ok."""
     if response.status_code != expected_status:
-        ct = response.headers.get('Content-Type', '')
-        if ct.split(';')[0] in JSON_RELATED_MIMETYPES:
-            errors = response.json().get('errors')
+        ct = response.headers.get("Content-Type", "")
+        if ct.split(";")[0] in JSON_RELATED_MIMETYPES:
+            errors = response.json().get("errors")
         else:
             errors = None
         raise CommandError(
             "Wrong status code from server (expected={}, got={}) errors={} headers={}".format(
-                expected_status, response.status_code, errors, response.headers))
+                expected_status, response.status_code, errors, response.headers
+            )
+        )
 
-    if response.headers.get('Content-Type') not in JSON_RELATED_MIMETYPES:
+    if response.headers.get("Content-Type") not in JSON_RELATED_MIMETYPES:
         return
 
     result = response.json()
-    if 'errors' in result:
-        raise CommandError("Response with errors from server: {}".format(result['errors']))
+    if "errors" in result:
+        raise CommandError(
+            "Response with errors from server: {}".format(result["errors"])
+        )
     return result
 
 
 class OCIRegistry:
     """Interface to a generic OCI Registry."""
 
-    def __init__(self, server, image_name, *, username='', password=''):
+    def __init__(self, server, image_name, *, username="", password=""):
         self.server = server
         self.image_name = image_name
         self.auth_token = None
 
         if username:
             _u_p = "{}:{}".format(username, password)
-            self.auth_encoded_credentials = base64.b64encode(_u_p.encode('ascii')).decode('ascii')
+            self.auth_encoded_credentials = base64.b64encode(
+                _u_p.encode("ascii")
+            ).decode("ascii")
         else:
             self.auth_encoded_credentials = None
 
@@ -93,14 +99,14 @@ class OCIRegistry:
         """Get the auth token."""
         headers = {}
         if self.auth_encoded_credentials is not None:
-            headers['Authorization'] = 'Basic {}'.format(self.auth_encoded_credentials)
+            headers["Authorization"] = "Basic {}".format(self.auth_encoded_credentials)
 
         logger.debug("Authenticating! %s", auth_info)
         url = "{realm}?service={service}&scope={scope}".format_map(auth_info)
         response = requests.get(url, headers=headers)
 
         result = assert_response_ok(response)
-        auth_token = result['token']
+        auth_token = result["token"]
         return auth_token
 
     def _get_url(self, subpath):
@@ -109,7 +115,7 @@ class OCIRegistry:
 
     def _get_auth_info(self, response):
         """Parse a 401 response and get the needed auth parameters."""
-        www_auth = response.headers['Www-Authenticate']
+        www_auth = response.headers["Www-Authenticate"]
         if not www_auth.startswith("Bearer "):
             raise ValueError("Bearer not found")
         info = parse_keqv_list(parse_http_list(www_auth[7:]))
@@ -120,7 +126,7 @@ class OCIRegistry:
         if headers is None:
             headers = {}
         if self.auth_token is not None:
-            headers['Authorization'] = 'Bearer {}'.format(self.auth_token)
+            headers["Authorization"] = "Bearer {}".format(self.auth_token)
 
         if log:
             logger.debug("Hitting the registry: %s %s", method, url)
@@ -131,16 +137,17 @@ class OCIRegistry:
                 auth_info = self._get_auth_info(response)
             except (ValueError, KeyError) as exc:
                 raise CommandError(
-                    "Bad 401 response: {}; headers: {!r}".format(exc, response.headers))
+                    "Bad 401 response: {}; headers: {!r}".format(exc, response.headers)
+                )
             self.auth_token = self._authenticate(auth_info)
-            headers['Authorization'] = 'Bearer {}'.format(self.auth_token)
+            headers["Authorization"] = "Bearer {}".format(self.auth_token)
             response = requests.request(method, url, headers=headers, **kwargs)
 
         return response
 
     def _is_item_already_uploaded(self, url):
         """Verify if a generic item is uploaded."""
-        response = self._hit('HEAD', url)
+        response = self._hit("HEAD", url)
 
         if response.status_code == 200:
             # item is there, done!
@@ -153,7 +160,10 @@ class OCIRegistry:
             # we can continue with the upload
             logger.debug(
                 "Bad response when checking for uploaded %r: %r (headers=%s)",
-                url, response.status_code, response.headers)
+                url,
+                response.status_code,
+                response.headers,
+            )
             uploaded = False
         return uploaded
 
@@ -180,10 +190,12 @@ class OCIRegistry:
         mimetype = MANIFEST_LISTS if multiple_manifest else MANIFEST_V2_MIMETYPE
         url = self._get_url("manifests/{}".format(reference))
         headers = {
-            'Content-Type': mimetype,
+            "Content-Type": mimetype,
         }
         logger.debug("Uploading manifest with reference %s", reference)
-        response = self._hit('PUT', url, headers=headers, data=manifest_data.encode('utf8'))
+        response = self._hit(
+            "PUT", url, headers=headers, data=manifest_data.encode("utf8")
+        )
         assert_response_ok(response, expected_status=201)
         logger.debug("Manifest uploaded OK")
 
@@ -192,11 +204,15 @@ class OCIRegistry:
         # get the first URL to start pushing the blob
         logger.debug("Getting URL to push the blob")
         url = self._get_url("blobs/uploads/")
-        response = self._hit('POST', url)
+        response = self._hit("POST", url)
         assert_response_ok(response, expected_status=202)
-        upload_url = response.headers['Location']
-        range_from, range_to_inclusive = [int(x) for x in response.headers['Range'].split('-')]
-        logger.debug("Got upload URL ok with range %s-%s", range_from, range_to_inclusive)
+        upload_url = response.headers["Location"]
+        range_from, range_to_inclusive = [
+            int(x) for x in response.headers["Range"].split("-")
+        ]
+        logger.debug(
+            "Got upload URL ok with range %s-%s", range_from, range_to_inclusive
+        )
         if range_from != 0:
             raise CommandError("Server error: bad range received")
         if range_to_inclusive == 0:
@@ -204,7 +220,7 @@ class OCIRegistry:
 
         # start the chunked upload
         from_position = range_to_inclusive + 1
-        with open(filepath, 'rb') as fh:
+        with open(filepath, "rb") as fh:
             fh.seek(from_position)
             while True:
                 chunk = fh.read(CHUNK_SIZE)
@@ -213,29 +229,31 @@ class OCIRegistry:
 
                 end_position = from_position + len(chunk)
                 headers = {
-                    'Content-Length': str(len(chunk)),
-                    'Content-Range': '{}-{}'.format(from_position, end_position),
-                    'Content-Type': OCTET_STREAM_MIMETYPE,
+                    "Content-Length": str(len(chunk)),
+                    "Content-Range": "{}-{}".format(from_position, end_position),
+                    "Content-Type": OCTET_STREAM_MIMETYPE,
                 }
                 progress = 100 * end_position / size
-                print("Uploading.. {:.2f}%\r".format(progress), end='', flush=True)
-                response = self._hit('PATCH', upload_url, headers=headers, data=chunk, log=False)
+                print("Uploading.. {:.2f}%\r".format(progress), end="", flush=True)
+                response = self._hit(
+                    "PATCH", upload_url, headers=headers, data=chunk, log=False
+                )
                 assert_response_ok(response, expected_status=202)
 
-                upload_url = response.headers['Location']
+                upload_url = response.headers["Location"]
                 from_position += len(chunk)
 
         headers = {
-            'Content-Length': '0',
-            'Connection': 'close',
+            "Content-Length": "0",
+            "Connection": "close",
         }
         logger.debug("Closing the upload")
         closing_url = "{}&digest={}".format(upload_url, digest)
 
-        response = self._hit('PUT', closing_url, headers=headers, data='')
+        response = self._hit("PUT", closing_url, headers=headers, data="")
         assert_response_ok(response, expected_status=201)
         logger.debug("Upload finished OK")
-        if response.headers['Docker-Content-Digest'] != digest:
+        if response.headers["Docker-Content-Digest"] != digest:
             raise CommandError("Server error: the upload is corrupted")
 
 
@@ -243,9 +261,9 @@ class HashingTemporaryFile(io.FileIO):
     """A temporary file that keeps the hash and length of what is written."""
 
     def __init__(self):
-        tmp_file = tempfile.NamedTemporaryFile(mode='wb', delete=False)
+        tmp_file = tempfile.NamedTemporaryFile(mode="wb", delete=False)
         self.file_handler = tmp_file.file
-        super().__init__(tmp_file.name, mode='wb')
+        super().__init__(tmp_file.name, mode="wb")
         self.total_length = 0
         self.hasher = hashlib.sha256()
 
@@ -283,7 +301,11 @@ class ImageHandler:
             # as 'filename' and 'mtime' correspondingly as those go to the gzip headers,
             # to ensure same final hash across different runs
             dst_filehandler = gzip.GzipFile(
-                fileobj=hashing_temp_file, mode='wb', filename=os.path.basename(name), mtime=mtime)
+                fileobj=hashing_temp_file,
+                mode="wb",
+                filename=os.path.basename(name),
+                mtime=mtime,
+            )
         else:
             dst_filehandler = hashing_temp_file
         while True:
@@ -295,7 +317,7 @@ class ImageHandler:
         # gzip does not automatically close the underlying file handler, so let's do it manually
         hashing_temp_file.close()
 
-        digest = 'sha256:{}'.format(hashing_temp_file.hexdigest)
+        digest = "sha256:{}".format(hashing_temp_file.hexdigest)
         return hashing_temp_file.name, hashing_temp_file.total_length, digest
 
     def _upload_blob(self, filepath, size, digest):
@@ -315,7 +337,7 @@ class ImageHandler:
 
         # validate the image is present locally
         logger.debug("Checking image is present locally")
-        response = session.get(LOCAL_DOCKER_BASE_URL + '/images/{}/json'.format(digest))
+        response = session.get(LOCAL_DOCKER_BASE_URL + "/images/{}/json".format(digest))
         if response.status_code == 200:
             # image is there, we're fine
             pass
@@ -323,60 +345,73 @@ class ImageHandler:
             # image not found (known error)
             return
         else:
-            logger.debug("Bad response when validation local image: %s", response.status_code)
+            logger.debug(
+                "Bad response when validation local image: %s", response.status_code
+            )
             return
-        local_image_size = response.json()['Size']
+        local_image_size = response.json()["Size"]
 
         logger.debug("Getting the image from the local repo; size=%s", local_image_size)
         response = session.get(
-            LOCAL_DOCKER_BASE_URL + '/images/{}/get'.format(digest), stream=True)
+            LOCAL_DOCKER_BASE_URL + "/images/{}/get".format(digest), stream=True
+        )
 
-        tmp_exported = tempfile.NamedTemporaryFile(mode='wb')
+        tmp_exported = tempfile.NamedTemporaryFile(mode="wb")
         extracted_total = 0
         for chunk in response.iter_content(2 ** 20):
             extracted_total += len(chunk)
             progress = 100 * extracted_total / local_image_size
-            print("Extracting... {:.2f}%\r".format(progress), end='', flush=True)
+            print("Extracting... {:.2f}%\r".format(progress), end="", flush=True)
             tmp_exported.file.write(chunk)
 
         # open the image tar and inspect it to get the config and layers for the manifest
         tmp_exported.file.flush()
         image_tar = tarfile.open(tmp_exported.name)
         tmp_exported.close()  # closing implies deletion, but the tar lib already grabbed it ok
-        local_manifest = json.load(image_tar.extractfile('manifest.json'))
+        local_manifest = json.load(image_tar.extractfile("manifest.json"))
         (local_manifest,) = local_manifest
-        config_name = local_manifest.get('Config')
-        layer_names = local_manifest['Layers']
+        config_name = local_manifest.get("Config")
+        layer_names = local_manifest["Layers"]
         manifest = {
-            'mediaType': MANIFEST_V2_MIMETYPE,
-            'schemaVersion': 2,
+            "mediaType": MANIFEST_V2_MIMETYPE,
+            "schemaVersion": 2,
         }
 
         if config_name is not None:
             fpath, size, digest = self._extract_file(image_tar, config_name)
             logger.debug("Uploading config blob, size=%s, digest=%s", size, digest)
             self._upload_blob(fpath, size, digest)
-            manifest['config'] = {
-                'digest': digest,
-                'mediaType': CONFIG_MIMETYPE,
-                'size': size,
+            manifest["config"] = {
+                "digest": digest,
+                "mediaType": CONFIG_MIMETYPE,
+                "size": size,
             }
 
-        manifest['layers'] = manifest_layers = []
+        manifest["layers"] = manifest_layers = []
         for idx, layer_name in enumerate(layer_names, 1):
-            fpath, size, digest = self._extract_file(image_tar, layer_name, compress=True)
+            fpath, size, digest = self._extract_file(
+                image_tar, layer_name, compress=True
+            )
             logger.debug(
                 "Uploading layer blob %s/%s, size=%s, digest=%s",
-                idx, len(layer_names), size, digest)
+                idx,
+                len(layer_names),
+                size,
+                digest,
+            )
             self._upload_blob(fpath, size, digest)
-            manifest_layers.append({
-                'digest': digest,
-                'mediaType': LAYER_MIMETYPE,
-                'size': size,
-            })
+            manifest_layers.append(
+                {
+                    "digest": digest,
+                    "mediaType": LAYER_MIMETYPE,
+                    "size": size,
+                }
+            )
 
         # upload the manifest
         manifest_data = json.dumps(manifest)
-        digest = 'sha256:{}'.format(hashlib.sha256(manifest_data.encode('utf8')).hexdigest())
+        digest = "sha256:{}".format(
+            hashlib.sha256(manifest_data.encode("utf8")).hexdigest()
+        )
         self.registry.upload_manifest(manifest_data, digest)
         return digest
