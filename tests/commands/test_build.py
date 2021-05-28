@@ -20,6 +20,7 @@ import logging
 import os
 import pathlib
 import socket
+import subprocess
 import sys
 import zipfile
 from collections import namedtuple

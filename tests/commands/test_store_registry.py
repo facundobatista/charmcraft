@@ -393,7 +393,6 @@ def test_ociregistry_is_item_uploaded_strange_response(responses, caplog):
 # -- tests for the OCIRegistry manifest upload
 
 
-
 def test_ociregistry_upload_manifest_v2(responses, caplog):
     """Upload a V2 manifest."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")

@@ -40,9 +40,9 @@ install_requires = [
     "pyyaml",
     "requests",
     "requests-toolbelt",
+    "requests-unixsocket",
     "tabulate",
 ]
-#FIXME: add new req
 
 dev_requires = [
     "black",

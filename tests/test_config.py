@@ -160,7 +160,7 @@ def test_schema_type_missing(create_config, check_schema_error):
     create_config(
         """
         charmhub:
-            api_url: https://www.canonical.com
+            api-url: https://www.canonical.com
     """
     )
     check_schema_error(
@@ -205,73 +205,109 @@ def test_schema_type_limited_values(create_config, check_schema_error):
 
 
 def test_schema_charmhub_api_url_bad_type(create_config, check_schema_error):
-    """Schema validation, charmhub.api_url must be a string."""
+    """Schema validation, charmhub.api-url must be a string."""
     create_config(
         """
         type: charm  # mandatory
         charmhub:
-            api_url: 33
+            api-url: 33
     """
     )
     check_schema_error(
         dedent(
             """\
             Bad charmcraft.yaml content:
-            - invalid or missing URL scheme in field 'charmhub.api_url'"""
+            - invalid or missing URL scheme in field 'charmhub.api-url'"""
         )
     )
 
 
 def test_schema_charmhub_api_url_bad_format(create_config, check_schema_error):
-    """Schema validation, charmhub.api_url must be a full URL."""
+    """Schema validation, charmhub.api-url must be a full URL."""
     create_config(
         """
         type: charm  # mandatory
         charmhub:
-            api_url: stuff.com
+            api-url: stuff.com
     """
     )
     check_schema_error(
         dedent(
             """\
             Bad charmcraft.yaml content:
-            - invalid or missing URL scheme in field 'charmhub.api_url'"""
+            - invalid or missing URL scheme in field 'charmhub.api-url'"""
         )
     )
 
 
 def test_schema_charmhub_storage_url_bad_type(create_config, check_schema_error):
-    """Schema validation, charmhub.storage_url must be a string."""
+    """Schema validation, charmhub.storage-url must be a string."""
     create_config(
         """
         type: charm  # mandatory
         charmhub:
-            storage_url: 33
+            storage-url: 33
     """
     )
     check_schema_error(
         dedent(
             """\
             Bad charmcraft.yaml content:
-            - invalid or missing URL scheme in field 'charmhub.storage_url'"""
+            - invalid or missing URL scheme in field 'charmhub.storage-url'"""
         )
     )
 
 
 def test_schema_charmhub_storage_url_bad_format(create_config, check_schema_error):
-    """Schema validation, charmhub.storage_url must be a full URL."""
+    """Schema validation, charmhub.storage-url must be a full URL."""
     create_config(
         """
         type: charm  # mandatory
         charmhub:
-            storage_url: stuff.com
+            storage-url: stuff.com
     """
     )
     check_schema_error(
         dedent(
             """\
             Bad charmcraft.yaml content:
-            - invalid or missing URL scheme in field 'charmhub.storage_url'"""
+            - invalid or missing URL scheme in field 'charmhub.storage-url'"""
+        )
+    )
+
+
+def test_schema_charmhub_registry_url_bad_type(create_config, check_schema_error):
+    """Schema validation, charmhub.registry-url must be a string."""
+    create_config(
+        """
+        type: charm  # mandatory
+        charmhub:
+            registry-url: 33
+    """
+    )
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - invalid or missing URL scheme in field 'charmhub.registry-url'"""
+        )
+    )
+
+
+def test_schema_charmhub_registry_url_bad_format(create_config, check_schema_error):
+    """Schema validation, charmhub.registry-url must be a full URL."""
+    create_config(
+        """
+        type: charm  # mandatory
+        charmhub:
+            registry-url: stuff.com
+    """
+    )
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - invalid or missing URL scheme in field 'charmhub.registry-url'"""
         )
     )
 
@@ -282,7 +318,7 @@ def test_schema_charmhub_no_extra_properties(create_config, check_schema_error):
         """
         type: bundle
         charmhub:
-            storage_url: https://some.server.com
+            storage-url: https://some.server.com
             crazy: false
     """
     )

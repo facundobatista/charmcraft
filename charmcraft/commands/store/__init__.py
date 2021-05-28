@@ -18,7 +18,6 @@
 
 import ast
 import hashlib
-import json
 import logging
 import pathlib
 import string
@@ -41,7 +40,7 @@ from charmcraft.utils import (
 )
 
 from .store import Store
-from .registry import ImageHandler
+from .registry import ImageHandler, OCIRegistry
 
 logger = logging.getLogger("charmcraft.commands.store")
 

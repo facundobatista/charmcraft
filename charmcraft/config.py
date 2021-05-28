@@ -211,13 +211,14 @@ class Parts(ModelConfigDefaults):
         raise KeyError(part_name)
 
 
-class CharmhubConfig(ModelConfigDefaults):
+class CharmhubConfig(
+    ModelConfigDefaults, alias_generator=lambda s: s.replace("_", "-")
+):
     """Definition of Charmhub endpoint configuration."""
 
     api_url: pydantic.HttpUrl = "https://api.charmhub.io"
     storage_url: pydantic.HttpUrl = "https://storage.snapcraftcontent.com"
-    registry_url = pydantic.HttpUrl = "https://registry.jujucharms.com"
-    #FIXME: verify _/-
+    registry_url: pydantic.HttpUrl = "https://registry.jujucharms.com"
 
 
 class Base(ModelConfigDefaults):

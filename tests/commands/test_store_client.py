@@ -653,11 +653,10 @@ def test_client_push_response_unsuccessful(tmp_path):
         )
         with pytest.raises(CommandError) as cm:
             Client("http://api.test", "http://storage.test").push(test_filepath)
-        # checking all this separatedly as in Py3.5 dicts order is not deterministic
-        message = str(cm.value)
-        assert "Server error while pushing file:" in message
-        assert "'successful': False" in message
-        assert "'upload_id': None" in message
+        expected = (
+            "Server error while pushing file: {'successful': False, 'upload_id': None}"
+        )
+        assert str(cm.value) == expected
 
 
 def test_storage_push_succesful():
