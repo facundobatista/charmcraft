@@ -17,18 +17,25 @@
 """Tests for the OCI Registry related functionality (code in store/registry.py)."""
 
 import base64
+import gzip
+import hashlib
 import io
 import json
+import tarfile
 import logging
-from unittest.mock import patch, call
+from unittest.mock import patch
 
 import pytest
 import requests
 
 from charmcraft.cmdbase import CommandError
+from charmcraft.commands.store import registry
 from charmcraft.commands.store.registry import (
     ImageHandler,
+    OCTET_STREAM_MIMETYPE,
+    CONFIG_MIMETYPE,
     LAYER_MIMETYPE,
+    LOCAL_DOCKER_BASE_URL,
     MANIFEST_LISTS,
     MANIFEST_V2_MIMETYPE,
     OCIRegistry,
@@ -291,7 +298,7 @@ def test_hit_no_log(caplog, responses):
 
 # -- tests for some OCIRegistry helpers
 
-def test_is_manifest_uploaded():
+def test_ociregistry_is_manifest_uploaded():
     """Check the simple call with correct path to the generic verifier."""
     ocireg = OCIRegistry("https://fakereg.com", "test-image")
     with patch.object(ocireg, '_is_item_already_uploaded') as mock_verifier:
@@ -302,7 +309,7 @@ def test_is_manifest_uploaded():
     mock_verifier.assert_called_with(url)
 
 
-def test_is_item_uploaded_simple_yes(responses):
+def test_ociregistry_is_item_uploaded_simple_yes(responses):
     """Simple case for the item already uploaded."""
     ocireg = OCIRegistry("http://fakereg.com/", "test-image")
     url = 'http://fakereg.com/v2/test-image/stuff/some-reference'
@@ -313,7 +320,7 @@ def test_is_item_uploaded_simple_yes(responses):
     assert result is True
 
 
-def test_is_item_uploaded_simple_no(responses):
+def test_ociregistry_is_item_uploaded_simple_no(responses):
     """Simple case for the item NOT already uploaded."""
     ocireg = OCIRegistry("http://fakereg.com/", "test-image")
     url = 'http://fakereg.com/v2/test-image/stuff/some-reference'
@@ -325,7 +332,7 @@ def test_is_item_uploaded_simple_no(responses):
 
 
 @pytest.mark.parametrize('redir_status', [302, 307])
-def test_is_item_uploaded_redirect(responses, redir_status):
+def test_ociregistry_is_item_uploaded_redirect(responses, redir_status):
     """The verification is redirected to somewhere else."""
     ocireg = OCIRegistry("http://fakereg.com/", "test-image")
     url1 = 'http://fakereg.com/v2/test-image/stuff/some-reference'
@@ -338,7 +345,7 @@ def test_is_item_uploaded_redirect(responses, redir_status):
     assert result is True
 
 
-def test_is_item_uploaded_strange_response(responses, caplog):
+def test_ociregistry_is_item_uploaded_strange_response(responses, caplog):
     """Unexpected response."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")
 
@@ -356,100 +363,9 @@ def test_is_item_uploaded_strange_response(responses, caplog):
     assert expected in [rec.message for rec in caplog.records]
 
 
-# -- tests for the OCIRegistry manifest download and upload
+# -- tests for the OCIRegistry manifest upload
 
-def test_get_manifest_simple_v2(responses, caplog):
-    """Straightforward download of a v2 manifest."""
-    caplog.set_level(logging.DEBUG, logger="charmcraft")
-
-    ocireg = OCIRegistry("https://fakereg.com", "test-image")
-    url = 'https://fakereg.com/v2/test-image/manifests/test-reference'
-    response_headers = {'Docker-Content-Digest': 'test-digest'}
-    response_content = {"schemaVersion": 2, "foo": "bar", "unicodecontent": "moño"}
-    responses.add(responses.GET, url, status=200, headers=response_headers, json=response_content)
-
-    # try it
-    sublist, digest, raw_manifest = ocireg.get_manifest('test-reference')
-    assert sublist is None
-    assert digest == 'test-digest'
-    assert raw_manifest == responses.calls[0].response.text  # must be exactly the same
-
-    log_lines = [rec.message for rec in caplog.records]
-    assert "Getting manifests list for test-reference" in log_lines
-    assert "Got the manifest directly, schema 2" in log_lines
-
-    assert responses.calls[0].request.headers['Accept'] == MANIFEST_LISTS
-
-
-def test_get_manifest_v1_and_redownload(responses, caplog):
-    """Get a v2 manifest after initially getting a v1."""
-    caplog.set_level(logging.DEBUG, logger="charmcraft")
-
-    ocireg = OCIRegistry("https://fakereg.com", "test-image")
-    # first response with v1 manifest
-    url = 'https://fakereg.com/v2/test-image/manifests/test-reference'
-    response_headers = {'Docker-Content-Digest': 'test-digest'}
-    response_content = {"schemaVersion": 1}
-    responses.add(responses.GET, url, status=200, headers=response_headers, json=response_content)
-    # second response with v2 manifest, note the changed digest!
-    url = 'https://fakereg.com/v2/test-image/manifests/test-reference'
-    response_headers = {'Docker-Content-Digest': 'test-digest-for-real'}
-    response_content = {"schemaVersion": 2}
-    responses.add(responses.GET, url, status=200, headers=response_headers, json=response_content)
-
-    # try it
-    sublist, digest, raw_manifest = ocireg.get_manifest('test-reference')
-    assert sublist is None
-    assert digest == 'test-digest-for-real'
-    assert raw_manifest == responses.calls[1].response.text  # the second one
-
-    log_lines = [rec.message for rec in caplog.records]
-    assert "Getting manifests list for test-reference" in log_lines
-    assert "Got the manifest directly, schema 1" in log_lines
-    assert "Got the v2 manifest ok" in log_lines
-
-    assert responses.calls[0].request.headers['Accept'] == MANIFEST_LISTS
-    assert responses.calls[1].request.headers['Accept'] == MANIFEST_V2_MIMETYPE
-
-
-def test_get_manifest_simple_multiple(responses):
-    """Straightforward download of a multiple manifest."""
-    ocireg = OCIRegistry("https://fakereg.com", "test-image")
-    url = 'https://fakereg.com/v2/test-image/manifests/test-reference'
-    response_headers = {'Docker-Content-Digest': 'test-digest'}
-    lot_of_manifests = [{'manifest1': 'stuff'}, {'manifest2': 'morestuff', 'foo': 'bar'}]
-    response_content = {'manifests': lot_of_manifests}
-    responses.add(responses.GET, url, status=200, headers=response_headers, json=response_content)
-
-    # try it
-    sublist, digest, raw_manifest = ocireg.get_manifest('test-reference')
-    assert sublist == lot_of_manifests
-    assert digest == 'test-digest'
-    assert raw_manifest == responses.calls[0].response.text  # exact
-
-
-def test_get_manifest_bad_v2(responses):
-    """Couldn't get a v2 manifest."""
-    ocireg = OCIRegistry("https://fakereg.com", "test-image")
-
-    url = 'https://fakereg.com/v2/test-image/manifests/test-reference'
-    response_headers = {'Docker-Content-Digest': 'test-digest'}
-    response_content = {"schemaVersion": 1}
-    responses.add(responses.GET, url, status=200, headers=response_headers, json=response_content)
-
-    # second response with a bad manifest
-    url = 'https://fakereg.com/v2/test-image/manifests/test-reference'
-    response_headers = {'Docker-Content-Digest': 'test-digest-for-real'}
-    response_content = {"sadly broken": ":("}
-    responses.add(responses.GET, url, status=200, headers=response_headers, json=response_content)
-
-    # try it
-    with pytest.raises(CommandError) as cm:
-        ocireg.get_manifest('test-reference')
-    assert str(cm.value) == "Manifest v2 requested but got something else: {'sadly broken': ':('}"
-
-
-def test_upload_manifest_v2(responses, caplog):
+def test_ociregistry_upload_manifest_v2(responses, caplog):
     """Upload a V2 manifest."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")
     ocireg = OCIRegistry("https://fakereg.com", "test-image")
@@ -471,7 +387,7 @@ def test_upload_manifest_v2(responses, caplog):
     assert responses.calls[0].request.body == raw_manifest_data.encode('ascii')
 
 
-def test_upload_manifest_list(responses):
+def test_ociregistry_upload_manifest_list(responses):
     """Upload a "multiple" manifest."""
     ocireg = OCIRegistry("https://fakereg.com", "test-image")
 
@@ -485,325 +401,602 @@ def test_upload_manifest_list(responses):
     assert responses.calls[0].request.headers['Content-Type'] == MANIFEST_LISTS
 
 
-# -- tests for the OCIRegistry blob download and upload
+# -- tests for the OCIRegistry blob upload
 
-def test_():
-    """."""
-    fixme
+def test_ociregistry_upload_blob_complete(tmp_path, caplog, responses, monkeypatch):
+    """Complete upload of a binary to the registry."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+    ocireg = OCIRegistry("https://fakereg.com", "test-image")
+    base_url = 'https://fakereg.com/v2/test-image/'
+
+    # fake the first initial response
+    pump_url_1 = base_url + 'fakeurl-1'
+    responses.add(
+        responses.POST, base_url + 'blobs/uploads/', status=202,
+        headers={'Location': pump_url_1, 'Range': '0-0'})
+
+    # and the intermediate ones, chained
+    pump_url_2 = base_url + 'fakeurl-2'
+    pump_url_3 = base_url + 'fakeurl-3'
+    pump_url_4 = base_url + 'fakeurl-4'
+    responses.add(responses.PATCH, pump_url_1, status=202, headers={'Location': pump_url_2})
+    responses.add(responses.PATCH, pump_url_2, status=202, headers={'Location': pump_url_3})
+    responses.add(responses.PATCH, pump_url_3, status=202, headers={'Location': pump_url_4})
+
+    # finally, the closing url
+    responses.add(
+        responses.PUT, base_url + 'fakeurl-4&digest=test-digest', status=201,
+        headers={'Docker-Content-Digest': 'test-digest'})
+
+    # prepare a fake content that will be pushed in 3 parts
+    monkeypatch.setattr(registry, 'CHUNK_SIZE', 3)
+    bytes_source = tmp_path / 'testfile'
+    bytes_source.write_text("abcdefgh")
+
+    # call!
+    ocireg.upload_blob(bytes_source, 8, 'test-digest')
+
+    # check all the sent headers
+    expected_headers_per_request = [
+        {},  # nothing special in the initial one
+        {'Content-Length': '3', 'Content-Range': '0-3', 'Content-Type': OCTET_STREAM_MIMETYPE},
+        {'Content-Length': '3', 'Content-Range': '3-6', 'Content-Type': OCTET_STREAM_MIMETYPE},
+        {'Content-Length': '2', 'Content-Range': '6-8', 'Content-Type': OCTET_STREAM_MIMETYPE},
+        {'Content-Length': '0', 'Connection': 'close'},  # closing
+    ]
+    for idx, expected_headers in enumerate(expected_headers_per_request):
+        sent_headers = responses.calls[idx].request.headers
+        for key, value in expected_headers.items():
+            assert sent_headers.get(key) == value
+
+    expected = [
+        "Getting URL to push the blob",
+        'Hitting the registry: POST https://fakereg.com/v2/test-image/blobs/uploads/',
+        "Got upload URL ok with range 0-0",
+        "Closing the upload",
+        'Hitting the registry: PUT https://fakereg.com/v2/test-image/fakeurl-4&digest=test-digest',
+        "Upload finished OK",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
 
 
-# -- tests for the ImageHandler blob and manifest processing
+def test_ociregistry_upload_blob_bad_initial_response(responses):
+    """Bad initial response when starting to upload."""
+    ocireg = OCIRegistry("https://fakereg.com", "test-image")
+    base_url = 'https://fakereg.com/v2/test-image/'
+
+    # fake the first initial response with problems
+    responses.add(responses.POST, base_url + 'blobs/uploads/', status=500)
+
+    # call!
+    msg = r'Wrong status code from server \(expected=202, got=500\).*'
+    with pytest.raises(CommandError, match=msg):
+        ocireg.upload_blob('test-filepath', 8, 'test-digest')
+
+
+def test_ociregistry_upload_blob_bad_upload_range(responses):
+    """Received a broken range info."""
+    ocireg = OCIRegistry("https://fakereg.com", "test-image")
+    base_url = 'https://fakereg.com/v2/test-image/'
+
+    # fake the first initial response with problems
+    responses.add(
+        responses.POST, base_url + 'blobs/uploads/', status=202,
+        headers={'Location': 'test-next-url', 'Range': '9-9'})
+
+    # call!
+    msg = "Server error: bad range received"
+    with pytest.raises(CommandError, match=msg):
+        ocireg.upload_blob('test-filepath', 8, 'test-digest')
+
+
+def test_ociregistry_upload_blob_resumed(tmp_path, caplog, responses):
+    """The upload is resumed after server indication to do so."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+    ocireg = OCIRegistry("https://fakereg.com", "test-image")
+    base_url = 'https://fakereg.com/v2/test-image/'
+
+    # fake the first initial response, indicating that the store has already the first 5 bytes
+    pump_url_1 = base_url + 'fakeurl-1'
+    responses.add(
+        responses.POST, base_url + 'blobs/uploads/', status=202,
+        headers={'Location': pump_url_1, 'Range': '0-4'})  # has bytes in position 0, 1, 2, 3 & 4
+
+    # and the intermediate one
+    pump_url_2 = base_url + 'fakeurl-2'
+    responses.add(responses.PATCH, pump_url_1, status=202, headers={'Location': pump_url_2})
+
+    # finally, the closing url
+    responses.add(
+        responses.PUT, base_url + 'fakeurl-2&digest=test-digest', status=201,
+        headers={'Docker-Content-Digest': 'test-digest'})
+
+    # prepare a fake content
+    bytes_source = tmp_path / 'testfile'
+    bytes_source.write_text("abcdefgh")
+
+    # call!
+    ocireg.upload_blob(bytes_source, 8, 'test-digest')
+
+    # check all the sent headers
+    expected_headers_per_request = [
+        {},  # nothing special in the initial one
+        {'Content-Length': '3', 'Content-Range': '5-8', 'Content-Type': OCTET_STREAM_MIMETYPE},
+        {'Content-Length': '0', 'Connection': 'close'},  # closing
+    ]
+    for idx, expected_headers in enumerate(expected_headers_per_request):
+        sent_headers = responses.calls[idx].request.headers
+        for key, value in expected_headers.items():
+            assert sent_headers.get(key) == value
+
+    expected = [
+        "Getting URL to push the blob",
+        'Hitting the registry: POST https://fakereg.com/v2/test-image/blobs/uploads/',
+        "Got upload URL ok with range 0-4",
+        "Closing the upload",
+        'Hitting the registry: PUT https://fakereg.com/v2/test-image/fakeurl-2&digest=test-digest',
+        "Upload finished OK",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+def test_ociregistry_upload_blob_bad_response_middle(tmp_path, responses, monkeypatch):
+    """Bad response from the server when pumping bytes."""
+    ocireg = OCIRegistry("https://fakereg.com", "test-image")
+    base_url = 'https://fakereg.com/v2/test-image/'
+
+    # fake the first initial response
+    pump_url_1 = base_url + 'fakeurl-1'
+    responses.add(
+        responses.POST, base_url + 'blobs/uploads/', status=202,
+        headers={'Location': pump_url_1, 'Range': '0-0'})
+
+    # and the intermediate ones, chained, with a crash
+    pump_url_2 = base_url + 'fakeurl-2'
+    responses.add(responses.PATCH, pump_url_1, status=202, headers={'Location': pump_url_2})
+    responses.add(responses.PATCH, pump_url_2, status=504)
+
+    # prepare a fake content that will be pushed in 3 parts
+    monkeypatch.setattr(registry, 'CHUNK_SIZE', 3)
+    bytes_source = tmp_path / 'testfile'
+    bytes_source.write_text("abcdefgh")
+
+    # call!
+    msg = r'Wrong status code from server \(expected=202, got=504\).*'
+    with pytest.raises(CommandError, match=msg):
+        ocireg.upload_blob(bytes_source, 8, 'test-digest')
+
+
+def test_ociregistry_upload_blob_bad_response_closing(tmp_path, responses):
+    """Bad response from the server when closing the upload."""
+    ocireg = OCIRegistry("https://fakereg.com", "test-image")
+    base_url = 'https://fakereg.com/v2/test-image/'
+
+    # fake the first initial response
+    pump_url_1 = base_url + 'fakeurl-1'
+    responses.add(
+        responses.POST, base_url + 'blobs/uploads/', status=202,
+        headers={'Location': pump_url_1, 'Range': '0-0'})
+
+    # and the intermediate one
+    pump_url_2 = base_url + 'fakeurl-2'
+    responses.add(responses.PATCH, pump_url_1, status=202, headers={'Location': pump_url_2})
+
+    # finally, the closing url, crashing
+    responses.add(responses.PUT, base_url + 'fakeurl-2&digest=test-digest', status=502)
+
+    # prepare a fake content
+    bytes_source = tmp_path / 'testfile'
+    bytes_source.write_text("abcdefgh")
+
+    # call!
+    msg = r'Wrong status code from server \(expected=201, got=502\).*'
+    with pytest.raises(CommandError, match=msg):
+        ocireg.upload_blob(bytes_source, 8, 'test-digest')
+
+
+def test_ociregistry_upload_blob_bad_final_digest(tmp_path, responses):
+    """Bad digest from server after closing the upload."""
+    ocireg = OCIRegistry("https://fakereg.com", "test-image")
+    base_url = 'https://fakereg.com/v2/test-image/'
+
+    # fake the first initial response
+    pump_url_1 = base_url + 'fakeurl-1'
+    responses.add(
+        responses.POST, base_url + 'blobs/uploads/', status=202,
+        headers={'Location': pump_url_1, 'Range': '0-0'})
+
+    # and the intermediate one
+    pump_url_2 = base_url + 'fakeurl-2'
+    responses.add(responses.PATCH, pump_url_1, status=202, headers={'Location': pump_url_2})
+
+    # finally, the closing url, bad digest
+    responses.add(
+        responses.PUT, base_url + 'fakeurl-2&digest=test-digest', status=201,
+        headers={'Docker-Content-Digest': 'somethingelse'})
+
+    # prepare a fake content
+    bytes_source = tmp_path / 'testfile'
+    bytes_source.write_text("abcdefgh")
+
+    # call!
+    msg = "Server error: the upload is corrupted"
+    with pytest.raises(CommandError, match=msg):
+        ocireg.upload_blob(bytes_source, 8, 'test-digest')
+
+
+# -- tests for the ImageHandler functionalities
 
 class FakeRegistry:
     """A fake registry to mimic behaviour of the real one and record actions."""
     def __init__(self, image_name=None):
         self.image_name = image_name
-        self.stored_manifests = dict()
-        self.uploaded_manifests = []
+        self.stored_manifests = {}
+        self.stored_blobs = {}
 
     def is_manifest_already_uploaded(self, reference):
         return reference in self.stored_manifests
 
     def upload_manifest(self, content, reference, multiple_manifest=False):
-        self.uploaded_manifests.append((content, reference, multiple_manifest))
+        self.stored_manifests[reference] = (content, multiple_manifest)
 
     def get_manifest(self, reference):
         return self.stored_manifests[reference]
 
+    def is_blob_already_uploaded(self, reference):
+        return reference in self.stored_blobs
 
-def test_():
-    """."""
-    fixme
+    def upload_blob(self, filepath, size, digest):
+        self.stored_blobs[digest] = (open(filepath, 'rb').read(), size)
 
 
-def test_imagehandler_process_manifest_simple(caplog):
-    """Process a simple manifest."""
+def test_imagehandler_check_in_registry_yes():
+    """Check if an image is in the registry and find it."""
+    fake_registry = FakeRegistry()
+    fake_registry.stored_manifests['test-reference'] = (None, 'test-digest', 'test-manifest')
+
+    im = ImageHandler(fake_registry)
+    result = im.check_in_registry('test-reference')
+    assert result is True
+
+
+def test_imagehandler_check_in_registry_no():
+    """Check if an image is in the registry and don't find it."""
+    fake_registry = FakeRegistry()
+
+    im = ImageHandler(fake_registry)
+    result = im.check_in_registry('test-reference')
+    assert result is False
+
+
+def test_imagehandler_extract_file_simple(tmp_path, caplog):
+    """Extract a file from the tarfile and gets its info."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")
 
-    raw_manifest = json.dumps({
-        'schemaVersion': 2,
-        'config': {
-            'size': 123,
-            'digest': 'test-digest-config',
+    # create a tar file with one file inside
+    test_content = b"test content for the sample file"
+    sample_file = tmp_path / "testfile.txt"
+    sample_file.write_bytes(test_content)
+    tar_filepath = tmp_path / "testfile.tar"
+    with tarfile.open(tar_filepath, "w") as tar:
+        tar.add(sample_file, "testfile.txt")
+
+    im = ImageHandler('registry')
+    with tarfile.open(tar_filepath, "r") as tar:
+        tmp_filepath, size, digest = im._extract_file(tar, "testfile.txt")
+
+    assert size == len(test_content)
+    assert digest == 'sha256:' + hashlib.sha256(test_content).hexdigest()
+    assert open(tmp_filepath, 'rb').read() == test_content
+
+    expected = [
+        "Extracting file 'testfile.txt' from local tar (compress=False)",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+def test_imagehandler_extract_file_compressed_ok(tmp_path, caplog):
+    """Extract a file from the tarfile and gets its info after compressed."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    # create a tar file with one file inside
+    test_content = b"test content for the sample file"
+    sample_file = tmp_path / "testfile.txt"
+    sample_file.write_bytes(test_content)
+    tar_filepath = tmp_path / "testfile.tar"
+    with tarfile.open(tar_filepath, "w") as tar:
+        tar.add(sample_file, "testfile.txt")
+
+    im = ImageHandler('registry')
+    with tarfile.open(tar_filepath, "r") as tar:
+        tmp_filepath, size, digest = im._extract_file(tar, "testfile.txt", compress=True)
+
+    compressed_content = open(tmp_filepath, 'rb').read()
+    assert size == len(compressed_content)
+    assert digest == 'sha256:' + hashlib.sha256(compressed_content).hexdigest()
+    assert gzip.decompress(compressed_content) == test_content
+
+    expected = [
+        "Extracting file 'testfile.txt' from local tar (compress=True)",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+def test_imagehandler_extract_file_compressed_deterministic(tmp_path, caplog):
+    """Different compressions for the same file give the exact same data."""
+    # create a tar file with one file inside
+    test_content = b"test content for the sample file"
+    sample_file = tmp_path / "testfile.txt"
+    sample_file.write_bytes(test_content)
+    tar_filepath = tmp_path / "testfile.tar"
+    with tarfile.open(tar_filepath, "w") as tar:
+        tar.add(sample_file, "testfile.txt")
+
+    im = ImageHandler('registry')
+    with tarfile.open(tar_filepath, "r") as tar:
+        _, _, digest1 = im._extract_file(tar, "testfile.txt", compress=True)
+        _, _, digest2 = im._extract_file(tar, "testfile.txt", compress=True)
+
+    assert digest1 == digest2
+
+
+def test_imagehandler_uploadblob_first_time(caplog, tmp_path):
+    """Upload a blob for the first time."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+    tmp_file = tmp_path / 'somebinary.dat'
+    tmp_file.write_text('testcontent')
+
+    fake_registry = FakeRegistry()
+
+    im = ImageHandler(fake_registry)
+    im._upload_blob(str(tmp_file), 20, 'superdigest')
+
+    # check it was uploaded
+    assert fake_registry.stored_blobs['superdigest'] == (b'testcontent', 20)
+
+    # verify the file is cleaned
+    assert not tmp_file.exists()
+
+    assert len(caplog.records) == 0
+
+
+def test_imagehandler_uploadblob_duplicated(caplog, tmp_path):
+    """Upload a blob that was already there."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+    tmp_file = tmp_path / 'somebinary.dat'
+    tmp_file.write_text('testcontent')
+
+    fake_registry = FakeRegistry()
+    # add the entry for the blob, the value is not important
+    fake_registry.stored_blobs['superdigest'] = None
+
+    im = ImageHandler(fake_registry)
+    im._upload_blob(str(tmp_file), 20, 'superdigest')
+
+    # check it was NOT uploaded again
+    assert fake_registry.stored_blobs['superdigest'] is None
+
+    # verify the file is cleaned
+    assert not tmp_file.exists()
+
+    expected = [
+        "Blob was already uploaded",
+    ]
+    assert expected == [rec.message for rec in caplog.records]
+
+
+def test_imagehandler_uploadfromlocal_complete(caplog, tmp_path, responses):
+    """Complete process of uploading a local image."""
+    caplog.set_level(logging.DEBUG, logger="charmcraft")
+
+    # fake an image in disk (a tar file with config, layers, and a manifest)."""
+    test_tar_image = tmp_path / 'test-image.tar'
+    test_tar_config_content = b"fake config for the image"
+    test_tar_layer1_content = b"fake first layer content for the image"
+    test_tar_layer2_content = b"fake second layer content for the image"
+    test_manifest_content = json.dumps([{
+        'Config': 'config.yaml',
+        'Layers': ['layer1.bin', 'layer2.bin'],
+    }]).encode('ascii')
+    tar_file = tarfile.TarFile(test_tar_image, 'w')
+    tar_content = [
+        ("manifest.json", test_manifest_content),
+        ("config.yaml", test_tar_config_content),
+        ("layer1.bin", test_tar_layer1_content),
+        ("layer2.bin", test_tar_layer2_content),
+    ]
+    for name, content in tar_content:
+        ti = tarfile.TarInfo(name)
+        ti.size = len(content)
+        tar_file.addfile(ti, fileobj=io.BytesIO(content))
+    tar_file.close()
+
+    # return 200 with the image info
+    image_size = test_tar_image.stat().st_size
+    image_info = {'Size': image_size, 'foobar': 'etc'}
+    responses.add(
+        responses.GET, LOCAL_DOCKER_BASE_URL + "/images/test-digest/json", json=image_info)
+
+    # return the (test) image itself
+    responses.add(
+        responses.GET, LOCAL_DOCKER_BASE_URL + "/images/test-digest/get",
+        body=open(test_tar_image, 'rb'), stream=True)
+
+    fake_registry = FakeRegistry()
+    im = ImageHandler(fake_registry)
+    main_call_result = im.upload_from_local('test-digest')
+
+    # check the uploaded blobs: first the config (as is), then the layers (compressed)
+    uploaded_config, uploaded_layer1, uploaded_layer2 = fake_registry.stored_blobs.items()
+
+    (u_config_digest, (u_config_content, u_config_size)) = uploaded_config
+    assert u_config_content == test_tar_config_content
+    assert u_config_size == len(u_config_content)
+    assert u_config_digest == 'sha256:' + hashlib.sha256(u_config_content).hexdigest()
+
+    (u_layer1_digest, (u_layer1_content, u_layer1_size)) = uploaded_layer1
+    assert gzip.decompress(u_layer1_content) == test_tar_layer1_content
+    assert u_layer1_size == len(u_layer1_content)
+    assert u_layer1_digest == 'sha256:' + hashlib.sha256(u_layer1_content).hexdigest()
+
+    (u_layer2_digest, (u_layer2_content, u_layer2_size)) = uploaded_layer2
+    assert gzip.decompress(u_layer2_content) == test_tar_layer2_content
+    assert u_layer2_size == len(u_layer2_content)
+    assert u_layer2_digest == 'sha256:' + hashlib.sha256(u_layer2_content).hexdigest()
+
+    # check the uploaded manifest metadata and real content
+    (uploaded_manifest,) = fake_registry.stored_manifests.items()
+    (u_manifest_digest, (u_manifest_content, u_manifest_multiple)) = uploaded_manifest
+    assert u_manifest_digest == 'sha256:' + hashlib.sha256(
+        u_manifest_content.encode('utf8')).hexdigest()
+    assert u_manifest_multiple is False
+
+    # the response from the function we're testing is the final remote digest
+    assert main_call_result == u_manifest_digest
+
+    u_manifest = json.loads(u_manifest_content)
+    assert u_manifest['mediaType'] == MANIFEST_V2_MIMETYPE
+    assert u_manifest['schemaVersion'] == 2
+
+    assert u_manifest['config'] == {
+        'digest': u_config_digest,
+        'mediaType': CONFIG_MIMETYPE,
+        'size': u_config_size,
+    }
+
+    assert u_manifest['layers'] == [
+        {
+            'digest': u_layer1_digest,
+            'mediaType': LAYER_MIMETYPE,
+            'size': u_layer1_size,
+        }, {
+            'digest': u_layer2_digest,
+            'mediaType': LAYER_MIMETYPE,
+            'size': u_layer2_size,
         },
-        'layers': [
-            {
-                'mediaType': LAYER_MIMETYPE,
-                'size': 456,
-                'digest': 'test-digest-layer-1',
-            }, {
-                'mediaType': LAYER_MIMETYPE,
-                'size': 789,
-                'digest': 'test-digest-layer-2',
-            },
-        ],
-    })
-    im = ImageHandler(None, FakeRegistry())
-    with patch.object(im, "_process_blob") as process_blob_mock:
-        im._process_manifest(raw_manifest)
-
-    process_blob_mock.mock_calls = [
-        call(123, "test-digest-config"),
-        call(456, "test-digest-layer-1"),
-        call(789, "test-digest-layer-2"),
     ]
+
+    # check the output logs
     expected = [
-        "Processing manifest version 2",
-        "Found config blob",
-        "Found layer blob 1/2",
-        "Found layer blob 2/2",
+        "Checking image is present locally",
+        "Getting the image from the local repo; size={}".format(image_size),
+        "Extracting file 'config.yaml' from local tar (compress=False)",
+        "Uploading config blob, size={}, digest={}".format(u_config_size, u_config_digest),
+        "Extracting file 'layer1.bin' from local tar (compress=True)",
+        "Uploading layer blob 1/2, size={}, digest={}".format(u_layer1_size, u_layer1_digest),
+        "Extracting file 'layer2.bin' from local tar (compress=True)",
+        "Uploading layer blob 2/2, size={}, digest={}".format(u_layer2_size, u_layer2_digest),
     ]
     assert expected == [rec.message for rec in caplog.records]
 
 
-def test_imagehandler_process_manifest_including_no_config(caplog):
-    """Process a manifest without a config field."""
+def test_imagehandler_uploadfromlocal_not_found_locally(caplog, responses):
+    """The requested image is not presented locally."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")
 
-    raw_manifest = json.dumps({
-        'schemaVersion': 2,
-        'layers': [
-            {
-                'mediaType': LAYER_MIMETYPE,
-                'size': 111,
-                'digest': 'test-digest-layer',
-            },
-        ],
-    })
-    im = ImageHandler(None, FakeRegistry())
-    with patch.object(im, "_process_blob") as process_blob_mock:
-        im._process_manifest(raw_manifest)
+    # return 404, which means that the image was not found
+    responses.add(
+        responses.GET, LOCAL_DOCKER_BASE_URL + "/images/test-digest/json", status=404)
 
-    process_blob_mock.mock_calls = [
-        call(111, "test-digest-layer"),
-    ]
+    im = ImageHandler('a-registry')
+    result = im.upload_from_local('test-digest')
+    assert result is None
+
     expected = [
-        "Processing manifest version 2",
-        "Found layer blob 1/1",
+        "Checking image is present locally",
     ]
     assert expected == [rec.message for rec in caplog.records]
 
 
-def test_imagehandler_process_manifest_including_no_layers(caplog):
-    """Process a manifest that includes non-layer items."""
+def test_imagehandler_uploadfromlocal_bad_validation_response(caplog, responses):
+    """Docker answered badly when checking for the image."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")
 
-    raw_manifest = json.dumps({
-        'schemaVersion': 2,
-        'config': {
-            'size': 123,
-            'digest': 'test-digest-config',
-        },
-        'layers': [
-            {
-                'mediaType': LAYER_MIMETYPE,
-                'size': 456,
-                'digest': 'test-digest-layer-1',
-            }, {
-                'mediaType': "strange-layer",
-                'unknown': 'fields',
-            },
-        ],
-    })
-    im = ImageHandler(None, FakeRegistry())
-    with patch.object(im, "_process_blob") as process_blob_mock:
-        im._process_manifest(raw_manifest)
+    # weird dockerd behaviour
+    responses.add(
+        responses.GET, LOCAL_DOCKER_BASE_URL + "/images/test-digest/json", status=500)
 
-    process_blob_mock.mock_calls = [
-        call(123, "test-digest-config"),
-        call(456, "test-digest-layer-1"),
-    ]
+    im = ImageHandler('a-registry')
+    result = im.upload_from_local('test-digest')
+    assert result is None
+
     expected = [
-        "Processing manifest version 2",
-        "Found config blob",
-        "Found layer blob 1/2",
-        "Found layer blob 2/2",
-        "Ignoring layer: {'mediaType': 'strange-layer', 'unknown': 'fields'}"
+        "Checking image is present locally",
+        "Bad response when validation local image: 500",
     ]
     assert expected == [rec.message for rec in caplog.records]
 
 
-# -- tests for the ImageHandler functionalities
-
-def test_imagehandler_copy_single_ok(caplog):
-    """Simple case of a single manifest to upload ok."""
+def test_imagehandler_uploadfromlocal_no_config(caplog, tmp_path, responses):
+    """Particular case of a manifest without config."""
     caplog.set_level(logging.DEBUG, logger="charmcraft")
 
-    # have the manifest only in the source registry
-    fake_src_registry = FakeRegistry()
-    fake_src_registry.stored_manifests['test-reference'] = (None, 'test-digest', 'test-manifest')
-    fake_dst_registry = FakeRegistry()
+    # fake an image in disk (a tar file with NO config, a layer, and a manifest)."""
+    test_tar_image = tmp_path / 'test-image.tar'
+    test_tar_layer_content = b"fake layer content for the image"
+    test_manifest_content = json.dumps([{
+        'Layers': ['layer.bin'],
+    }]).encode('ascii')
+    tar_file = tarfile.TarFile(test_tar_image, 'w')
+    tar_content = [
+        ("manifest.json", test_manifest_content),
+        ("layer.bin", test_tar_layer_content),
+    ]
+    for name, content in tar_content:
+        ti = tarfile.TarInfo(name)
+        ti.size = len(content)
+        tar_file.addfile(ti, fileobj=io.BytesIO(content))
+    tar_file.close()
 
-    im = ImageHandler(fake_src_registry, fake_dst_registry)
-    with patch.object(im, '_process_manifest') as process_manifest_mock:
-        result = im.copy_image('test-reference')
+    # return 200 with the image info
+    image_size = test_tar_image.stat().st_size
+    image_info = {'Size': image_size, 'foobar': 'etc'}
+    responses.add(
+        responses.GET, LOCAL_DOCKER_BASE_URL + "/images/test-digest/json", json=image_info)
 
-    assert result == 'test-digest'
-    assert fake_dst_registry.uploaded_manifests == [('test-manifest', 'test-reference', False)]
-    process_manifest_mock.assert_called_once_with('test-manifest')
+    # return the (test) image itself
+    responses.add(
+        responses.GET, LOCAL_DOCKER_BASE_URL + "/images/test-digest/get",
+        body=open(test_tar_image, 'rb'), stream=True)
 
+    fake_registry = FakeRegistry()
+    im = ImageHandler(fake_registry)
+    main_call_result = im.upload_from_local('test-digest')
+
+    # check the uploaded blob: just the compressed layer
+    (uploaded_layer,) = fake_registry.stored_blobs.items()
+
+    (u_layer_digest, (u_layer_content, u_layer_size)) = uploaded_layer
+    assert gzip.decompress(u_layer_content) == test_tar_layer_content
+    assert u_layer_size == len(u_layer_content)
+    assert u_layer_digest == 'sha256:' + hashlib.sha256(u_layer_content).hexdigest()
+
+    # check the uploaded manifest metadata and real content
+    (uploaded_manifest,) = fake_registry.stored_manifests.items()
+    (u_manifest_digest, (u_manifest_content, u_manifest_multiple)) = uploaded_manifest
+    assert u_manifest_digest == 'sha256:' + hashlib.sha256(
+        u_manifest_content.encode('utf8')).hexdigest()
+    assert u_manifest_multiple is False
+
+    # the response from the function we're testing is the final remote digest
+    assert main_call_result == u_manifest_digest
+
+    u_manifest = json.loads(u_manifest_content)
+    assert u_manifest['mediaType'] == MANIFEST_V2_MIMETYPE
+    assert u_manifest['schemaVersion'] == 2
+
+    assert 'config' not in u_manifest
+    assert u_manifest['layers'] == [{
+        'digest': u_layer_digest,
+        'mediaType': LAYER_MIMETYPE,
+        'size': u_layer_size,
+    }]
+
+    # check the output logs
     expected = [
-        "Got a single manifest with digest test-digest",
+        "Checking image is present locally",
+        "Getting the image from the local repo; size={}".format(image_size),
+        "Extracting file 'layer.bin' from local tar (compress=True)",
+        "Uploading layer blob 1/1, size={}, digest={}".format(u_layer_size, u_layer_digest),
     ]
     assert expected == [rec.message for rec in caplog.records]
-
-
-def test_imagehandler_copy_single_already_uploaded(caplog):
-    """A single manifest that is already uploaded."""
-    caplog.set_level(logging.DEBUG, logger="charmcraft")
-
-    # have the manifest both in the source and destionation registries
-    fake_src_registry = FakeRegistry()
-    fake_src_registry.stored_manifests['test-reference'] = (None, 'test-digest', 'test-manifest')
-    fake_dst_registry = FakeRegistry()
-    fake_dst_registry.stored_manifests['test-digest'] = (None, 'test-digest', 'test-manifest')
-
-    im = ImageHandler(fake_src_registry, fake_dst_registry)
-    with patch.object(im, '_process_manifest') as process_manifest_mock:
-        result = im.copy_image('test-reference')
-
-    assert result == 'test-digest'
-    assert fake_dst_registry.uploaded_manifests == []
-    assert process_manifest_mock.call_count == 0
-
-    expected = [
-        "Got a single manifest with digest test-digest",
-        "Manifest was already uploaded",
-    ]
-    assert expected == [rec.message for rec in caplog.records]
-
-
-def test_imagehandler_copy_multiple_manifest_ok(caplog):
-    """A multiple manifest with all sub-manifests to process."""
-    caplog.set_level(logging.DEBUG, logger="charmcraft")
-
-    # in source, two simple manifests, and a meta manifest pointing to them; nothing in dest
-    fake_src_registry = FakeRegistry()
-    submanifest1 = dict(digest='test-subdigest-1', platform='test-platform', foo='more stuff')
-    submanifest2 = dict(digest='test-subdigest-2', bar='whatever')
-    fake_src_registry.stored_manifests['test-reference'] = (
-        [submanifest1, submanifest2], 'test-meta-digest', 'test-meta-manifest')
-    fake_src_registry.stored_manifests['test-subdigest-1'] = (
-        None, 'test-subdigest-1', 'test-submanifest-1')
-    fake_src_registry.stored_manifests['test-subdigest-2'] = (
-        None, 'test-subdigest-2', 'test-submanifest-2')
-
-    fake_dst_registry = FakeRegistry()
-
-    im = ImageHandler(fake_src_registry, fake_dst_registry)
-    with patch.object(im, '_process_manifest') as process_manifest_mock:
-        result = im.copy_image('test-reference')
-
-    assert result == 'test-meta-digest'
-    assert fake_dst_registry.uploaded_manifests == [
-        ('test-submanifest-1', 'test-subdigest-1', False),
-        ('test-submanifest-2', 'test-subdigest-2', False),
-        ('test-meta-manifest', 'test-reference', True),
-    ]
-    process_manifest_mock.mock_calls = [
-        call('test-submanifest-1'),
-        call('test-submanifest-2'),
-    ]
-    expected = [
-        "Got a multiple manifest (len=2) with digest test-meta-digest",
-        "Sub-manifest 1/2 for platform test-platform, digest test-subdigest-1",
-        "Downloading manifest",
-        "Sub-manifest 2/2 for platform None, digest test-subdigest-2",
-        "Downloading manifest",
-        "Uploading meta-manifest",
-    ]
-    assert expected == [rec.message for rec in caplog.records]
-
-
-def test_imagehandler_copy_multiple_manifest_partial(caplog):
-    """A multiple manifest with some sub-manifests already uploaded."""
-    caplog.set_level(logging.DEBUG, logger="charmcraft")
-
-    # in source, two simple manifests, and a meta manifest pointing to them; the first
-    # simple one in the destination registry
-    fake_src_registry = FakeRegistry()
-    submanifest1 = dict(digest='test-subdigest-1', platform='test-platform', foo='more stuff')
-    submanifest2 = dict(digest='test-subdigest-2', bar='whatever')
-    fake_src_registry.stored_manifests['test-reference'] = (
-        [submanifest1, submanifest2], 'test-meta-digest', 'test-meta-manifest')
-    fake_src_registry.stored_manifests['test-subdigest-1'] = (
-        None, 'test-subdigest-1', 'test-submanifest-1')
-    fake_src_registry.stored_manifests['test-subdigest-2'] = (
-        None, 'test-subdigest-2', 'test-submanifest-2')
-
-    fake_dst_registry = FakeRegistry()
-    fake_dst_registry.stored_manifests['test-subdigest-1'] = (
-        None, 'test-subdigest-1', 'test-submanifest-1')
-
-    im = ImageHandler(fake_src_registry, fake_dst_registry)
-    with patch.object(im, '_process_manifest') as process_manifest_mock:
-        result = im.copy_image('test-reference')
-
-    assert result == 'test-meta-digest'
-    assert fake_dst_registry.uploaded_manifests == [
-        ('test-submanifest-2', 'test-subdigest-2', False),
-        ('test-meta-manifest', 'test-reference', True),
-    ]
-    process_manifest_mock.mock_calls = [
-        call('test-submanifest-2'),
-    ]
-    expected = [
-        "Got a multiple manifest (len=2) with digest test-meta-digest",
-        "Sub-manifest 1/2 for platform test-platform, digest test-subdigest-1",
-        "Sub-manifest was already uploaded",
-        "Sub-manifest 2/2 for platform None, digest test-subdigest-2",
-        "Downloading manifest",
-        "Uploading meta-manifest",
-    ]
-    assert expected == [rec.message for rec in caplog.records]
-
-
-def test_imagehandler_copy_multiple_manifest_already_uploaded(caplog):
-    """A multiple manifest that is already uploaded."""
-    caplog.set_level(logging.DEBUG, logger="charmcraft")
-
-    # a meta manifest in both in source and destination registries (no need for the real
-    # manifests, as they will not be retrieved/used)
-    fake_src_registry = FakeRegistry()
-    submanifest1 = dict(digest='test-subdigest-1', platform='test-platform', foo='more stuff')
-    submanifest2 = dict(digest='test-subdigest-2', bar='whatever')
-    fake_src_registry.stored_manifests['test-reference'] = (
-        [submanifest1, submanifest2], 'test-meta-digest', 'test-meta-manifest')
-
-    fake_dst_registry = FakeRegistry()
-    fake_dst_registry.stored_manifests['test-meta-digest'] = (
-        [submanifest1, submanifest2], 'test-meta-digest', 'test-meta-manifest')
-
-    im = ImageHandler(fake_src_registry, fake_dst_registry)
-    with patch.object(im, '_process_manifest') as process_manifest_mock:
-        result = im.copy_image('test-reference')
-
-    assert result == 'test-meta-digest'
-    assert fake_dst_registry.uploaded_manifests == []
-    process_manifest_mock.mock_calls = []
-    expected = [
-        "Got a multiple manifest (len=2) with digest test-meta-digest",
-        "Meta-manifest was already uploaded",
-    ]
-    assert expected == [rec.message for rec in caplog.records]
-
-
-def test_imagehandler_getdigest_ok():
-    """Get the destination URL ok."""
-    fake_dst_registry = FakeRegistry()
-    fake_dst_registry.stored_manifests['test-reference'] = (None, 'test-digest', 'test-manifest')
-
-    im = ImageHandler(None, fake_dst_registry)
-    result = im.get_digest('test-reference')
-
-    assert result == 'test-digest'
-
-
-def test_imagehandler_getdigest_missing():
-    """The indicated reference does not exist in the registry."""
-    im = ImageHandler(None, FakeRegistry('test-image'))
-    expected_error = (
-        "The image 'test-image' with reference 'test-reference' does not exist in "
-        "the Canonical's registry")
-    with pytest.raises(CommandError, match=expected_error):
-        im.get_digest('test-reference')
