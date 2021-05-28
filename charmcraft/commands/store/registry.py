@@ -241,6 +241,7 @@ class OCIRegistry:
 
 class HashingTemporaryFile(io.FileIO):
     """A temporary file that keeps the hash and length of what is written."""
+
     def __init__(self):
         tmp_file = tempfile.NamedTemporaryFile(mode='wb', delete=False)
         self.file_handler = tmp_file.file

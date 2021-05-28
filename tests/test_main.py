@@ -92,7 +92,7 @@ def test_dispatcher_config_needed_ok(tmp_path):
     dispatcher.run()
 
 
-def test_dispatcher_config_needed_problem():
+def test_dispatcher_config_needed_problem(tmp_path):
     """Command needs a config, which is not there."""
     class MyCommand(BaseCommand):
         help_msg = "some help"
@@ -103,7 +103,7 @@ def test_dispatcher_config_needed_problem():
             pass
 
     groups = [('test-group', 'title', [MyCommand])]
-    dispatcher = Dispatcher(['cmdname'], groups)
+    dispatcher = Dispatcher(['cmdname', '--project-dir', tmp_path], groups)
     with pytest.raises(CommandError) as err:
         dispatcher.run()
     assert str(err.value) == (
@@ -300,27 +300,6 @@ def test_dispatcher_commands_are_not_loaded_if_not_needed():
     dispatcher = Dispatcher(['command1'], groups)
     dispatcher.run()
     assert isinstance(MyCommand1._executed[0], argparse.Namespace)
-
-
-def test_dispatcher_commands_exec_parsed_args_post_verification_ok():
-    """Runs the parsed_args_post_verification method."""
-
-    class MyCommand(BaseCommand):
-
-        name = 'command'
-        help_msg = "some help"
-        _executed = []
-
-        def parsed_args_post_verification(self, parser, parsed_args):
-            self._executed.append((parser, parsed_args))
-
-    groups = [('test-group', 'title', [MyCommand])]
-    dispatcher = Dispatcher(['command1'], groups)
-    dispatcher.run()
-    assert MyCommand._executed
-    (parser, parsed_args) = MyCommand._executed
-    assert isinstance(parser, argparse.Namespace)
-    assert isinstance(parsed_args, argparse.Namespace)
 
 
 # --- Tests for the main entry point
