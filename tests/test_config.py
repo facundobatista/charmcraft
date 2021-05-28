@@ -14,25 +14,22 @@
 #
 # For further info, check https://github.com/canonical/charmcraft
 
+import datetime
 import os
-import sys
+from textwrap import dedent
 from unittest.mock import patch
 
-import attr
 import pytest
 
 from charmcraft.cmdbase import CommandError
 from charmcraft.config import (
-    BasicPrime,
+    Base,
+    BasesConfiguration,
     CharmhubConfig,
-    check_relative_paths,
-    check_url,
+    Part,
     load,
 )
-
-# Decide if we're using a Python 3.5 or older to support a jsonschema detail that uses
-# randomly ordered dictionaries
-is_py35 = (sys.version_info.major, sys.version_info.minor) < (3, 6)
+from charmcraft.utils import get_host_architecture
 
 
 @pytest.fixture
@@ -58,13 +55,14 @@ def test_load_current_directory(create_config, monkeypatch):
     """
     )
     monkeypatch.chdir(tmp_path)
+    fake_utcnow = datetime.datetime(1970, 1, 1, 0, 0, 2, tzinfo=datetime.timezone.utc)
     with patch("datetime.datetime") as mock:
-        mock.utcnow.return_value = "test_timestamp"
+        mock.utcnow.return_value = fake_utcnow
         config = load(None)
     assert config.type == "charm"
     assert config.project.dirpath == tmp_path
     assert config.project.config_provided
-    assert config.project.started_at == "test_timestamp"
+    assert config.project.started_at == fake_utcnow
 
 
 def test_load_specific_directory_ok(create_config):
@@ -126,7 +124,7 @@ def test_load_specific_directory_expanded(create_config, monkeypatch):
 def check_schema_error(tmp_path):
     """Helper to check the schema error."""
 
-    def check_schema_error(*expected_msgs):
+    def check_schema_error(expected_msg):
         """The real checker.
 
         Note this compares for multiple messages, as for Python 3.5 we don't have control on
@@ -135,7 +133,7 @@ def check_schema_error(tmp_path):
         """
         with pytest.raises(CommandError) as cm:
             load(tmp_path)
-        assert str(cm.value) in expected_msgs
+        assert str(cm.value) == expected_msg
 
     return check_schema_error
 
@@ -149,7 +147,11 @@ def test_schema_top_level_no_extra_properties(create_config, check_schema_error)
     """
     )
     check_schema_error(
-        "Additional properties are not allowed ('whatever' was unexpected)"
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - extra field 'whatever' not permitted in top-level configuration"""
+        )
     )
 
 
@@ -158,10 +160,16 @@ def test_schema_type_missing(create_config, check_schema_error):
     create_config(
         """
         charmhub:
-            api_url: 33
+            api_url: https://www.canonical.com
     """
     )
-    check_schema_error("Bad charmcraft.yaml content; missing fields: type.")
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - must be either 'charm' or 'bundle' in field 'type'"""
+        )
+    )
 
 
 def test_schema_type_bad_type(create_config, check_schema_error):
@@ -171,15 +179,13 @@ def test_schema_type_bad_type(create_config, check_schema_error):
         type: 33
     """
     )
-    if is_py35:
-        check_schema_error(
-            "Bad charmcraft.yaml content; the 'type' field must be a string: got 'int'.",
-            "Bad charmcraft.yaml content; the 'type' field must be one of: 'charm', 'bundle'.",
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - must be either 'charm' or 'bundle' in field 'type'"""
         )
-    else:
-        check_schema_error(
-            "Bad charmcraft.yaml content; the 'type' field must be a string: got 'int'."
-        )
+    )
 
 
 def test_schema_type_limited_values(create_config, check_schema_error):
@@ -190,7 +196,11 @@ def test_schema_type_limited_values(create_config, check_schema_error):
     """
     )
     check_schema_error(
-        "Bad charmcraft.yaml content; the 'type' field must be one of: 'charm', 'bundle'."
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - must be either 'charm' or 'bundle' in field 'type'"""
+        )
     )
 
 
@@ -203,22 +213,13 @@ def test_schema_charmhub_api_url_bad_type(create_config, check_schema_error):
             api_url: 33
     """
     )
-    if is_py35:
-        check_schema_error(
-            (
-                "Bad charmcraft.yaml content; the 'charmhub.api_url' field must be a string: "
-                "got 'int'."
-            ),
-            (
-                "Bad charmcraft.yaml content; the 'charmhub.api_url' field must be a full "
-                "URL (e.g. 'https://some.server.com'): got 33."
-            ),
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - invalid or missing URL scheme in field 'charmhub.api_url'"""
         )
-    else:
-        check_schema_error(
-            "Bad charmcraft.yaml content; the 'charmhub.api_url' field must be a string: "
-            "got 'int'."
-        )
+    )
 
 
 def test_schema_charmhub_api_url_bad_format(create_config, check_schema_error):
@@ -231,8 +232,11 @@ def test_schema_charmhub_api_url_bad_format(create_config, check_schema_error):
     """
     )
     check_schema_error(
-        "Bad charmcraft.yaml content; the 'charmhub.api_url' field must be a full URL (e.g. "
-        "'https://some.server.com'): got 'stuff.com'."
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - invalid or missing URL scheme in field 'charmhub.api_url'"""
+        )
     )
 
 
@@ -245,22 +249,13 @@ def test_schema_charmhub_storage_url_bad_type(create_config, check_schema_error)
             storage_url: 33
     """
     )
-    if is_py35:
-        check_schema_error(
-            (
-                "Bad charmcraft.yaml content; the 'charmhub.storage_url' field must be a string: "
-                "got 'int'."
-            ),
-            (
-                "Bad charmcraft.yaml content; the 'charmhub.storage_url' field must be a full "
-                "URL (e.g. 'https://some.server.com'): got 33."
-            ),
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - invalid or missing URL scheme in field 'charmhub.storage_url'"""
         )
-    else:
-        check_schema_error(
-            "Bad charmcraft.yaml content; the 'charmhub.storage_url' field must be a string: "
-            "got 'int'."
-        )
+    )
 
 
 def test_schema_charmhub_storage_url_bad_format(create_config, check_schema_error):
@@ -273,8 +268,11 @@ def test_schema_charmhub_storage_url_bad_format(create_config, check_schema_erro
     """
     )
     check_schema_error(
-        "Bad charmcraft.yaml content; the 'charmhub.storage_url' field must be a full URL (e.g. "
-        "'https://some.server.com'): got 'stuff.com'."
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - invalid or missing URL scheme in field 'charmhub.storage_url'"""
+        )
     )
 
 
@@ -288,7 +286,13 @@ def test_schema_charmhub_no_extra_properties(create_config, check_schema_error):
             crazy: false
     """
     )
-    check_schema_error("Additional properties are not allowed ('crazy' was unexpected)")
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - extra field 'crazy' not permitted in 'charmhub' configuration"""
+        )
+    )
 
 
 def test_schema_basicprime_bad_init_structure(create_config, check_schema_error):
@@ -300,7 +304,11 @@ def test_schema_basicprime_bad_init_structure(create_config, check_schema_error)
     """
     )
     check_schema_error(
-        "Bad charmcraft.yaml content; the 'parts' field must be a dict: got 'list'."
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - value is not a valid dict in field 'parts'"""
+        )
     )
 
 
@@ -315,7 +323,11 @@ def test_schema_basicprime_bad_bundle_structure(create_config, check_schema_erro
     """
     )
     check_schema_error(
-        "Bad charmcraft.yaml content; the 'parts.bundle' field must be a dict: got 'list'."
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - value is not a valid dict in field 'parts.bundle'"""
+        )
     )
 
 
@@ -330,11 +342,15 @@ def test_schema_basicprime_bad_prime_structure(create_config, check_schema_error
     """
     )
     check_schema_error(
-        "Bad charmcraft.yaml content; the 'parts.bundle.prime' field must be a list: got 'str'."
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - value is not a valid list in field 'parts.bundle.prime'"""
+        )
     )
 
 
-def test_schema_basicprime_bad_content_type(create_config, check_schema_error):
+def test_schema_basicprime_bad_prime_type_int(create_config, check_schema_error):
     """Schema validation, basic prime with a prime holding not strings."""
     create_config(
         """
@@ -344,22 +360,32 @@ def test_schema_basicprime_bad_content_type(create_config, check_schema_error):
                 prime: [33, 'foo']
     """
     )
-    if is_py35:
-        check_schema_error(
-            (
-                "Bad charmcraft.yaml content; the item 0 in 'parts.bundle.prime' field must be "
-                "a string: got 'int'."
-            ),
-            (
-                "Bad charmcraft.yaml content; the item 0 in 'parts.bundle.prime' field must be "
-                "a valid relative URL: got 33."
-            ),
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - string type expected in field 'parts.bundle.prime[0]'"""
         )
-    else:
-        check_schema_error(
-            "Bad charmcraft.yaml content; the item 0 in 'parts.bundle.prime' field must be "
-            "a string: got 'int'."
+    )
+
+
+def test_schema_basicprime_bad_prime_type_empty(create_config, check_schema_error):
+    """Schema validation, basic prime with a prime holding not strings."""
+    create_config(
+        """
+        type: charm  # mandatory
+        parts:
+            bundle:
+                prime: ['', 'foo']
+    """
+    )
+    check_schema_error(
+        (
+            "Bad charmcraft.yaml content:\n"
+            "- '' must be a valid relative path (cannot be empty)"
+            " in field 'parts.bundle.prime[0]'"
         )
+    )
 
 
 def test_schema_basicprime_bad_content_format(create_config, check_schema_error):
@@ -373,57 +399,32 @@ def test_schema_basicprime_bad_content_format(create_config, check_schema_error)
     """
     )
     check_schema_error(
-        "Bad charmcraft.yaml content; the item 0 in 'parts.bundle.prime' field must be "
-        "a valid relative URL: got '/bar/foo'."
+        (
+            "Bad charmcraft.yaml content:\n"
+            "- '/bar/foo' must be a valid relative path (cannot start with '/')"
+            " in field 'parts.bundle.prime[0]'"
+            ""
+        )
     )
 
 
-# -- tests for different validators
-
-
-def test_url_ok():
-    """URL format is ok."""
-    assert check_url("https://some.server.com")
-
-
-def test_url_no_scheme():
-    """URL format is wrong, missing scheme."""
-    with pytest.raises(ValueError) as cm:
-        check_url("some.server.com")
-    assert str(cm.value) == "must be a full URL (e.g. 'https://some.server.com')"
-
-
-def test_url_no_netloc():
-    """URL format is wrong, missing network location."""
-    with pytest.raises(ValueError) as cm:
-        check_url("https://")
-    assert str(cm.value) == "must be a full URL (e.g. 'https://some.server.com')"
-
-
-def test_relativepaths_ok():
-    """Indicated paths must be relative."""
-    assert check_relative_paths("foo/bar")
-
-
-def test_relativepaths_absolute():
-    """Indicated paths must be relative."""
-    with pytest.raises(ValueError) as cm:
-        check_relative_paths("/foo/bar")
-    assert str(cm.value) == "must be a valid relative URL"
-
-
-def test_relativepaths_empty():
-    """Indicated paths must be relative."""
-    with pytest.raises(ValueError) as cm:
-        check_relative_paths("")
-    assert str(cm.value) == "must be a valid relative URL"
-
-
-def test_relativepaths_nonstring():
-    """Indicated paths must be relative."""
-    with pytest.raises(ValueError) as cm:
-        check_relative_paths(33)
-    assert str(cm.value) == "must be a valid relative URL"
+def test_schema_unsupported_part(create_config, check_schema_error):
+    """Instantiate charmhub using a bad structure."""
+    """Schema validation, basic prime with bad bundle."""
+    create_config(
+        """
+        type: charm  # mandatory
+        parts:
+            not-bundle: 1
+    """
+    )
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - extra field 'not-bundle' not permitted in 'parts' configuration"""
+        )
+    )
 
 
 # -- tests for Charmhub config
@@ -432,7 +433,7 @@ def test_relativepaths_nonstring():
 def test_charmhub_frozen():
     """Cannot change values from the charmhub config."""
     config = CharmhubConfig()
-    with pytest.raises(attr.exceptions.FrozenInstanceError):
+    with pytest.raises(TypeError):
         config.api_url = "broken"
 
 
@@ -441,36 +442,406 @@ def test_charmhub_frozen():
 
 def test_basicprime_frozen():
     """Cannot change values from the charmhub config."""
-    config = BasicPrime.from_dict(
-        {
-            "bundle": {
-                "prime": ["foo", "bar"],
-            }
-        }
-    )
+    config = Part(prime=["foo", "bar"])
     with pytest.raises(TypeError):
         config[0] = "broken"
 
 
 def test_basicprime_ok():
     """A simple building ok."""
-    config = BasicPrime.from_dict(
-        {
-            "bundle": {
-                "prime": ["foo", "bar"],
-            }
-        }
-    )
-    assert config == ("foo", "bar")
+    config = Part(prime=["foo", "bar"])
+    with pytest.raises(TypeError):
+        config.prime = "broken"
+    assert config.prime == ["foo", "bar"]
 
 
 def test_basicprime_empty():
     """Building with an empty list."""
-    config = BasicPrime.from_dict(
-        {
-            "bundle": {
-                "prime": [],
-            }
-        }
+    config = Part(prime=[])
+    assert config.prime == []
+
+
+# -- tests for bases
+
+
+def test_no_bases_ok(create_config):
+    tmp_path = create_config(
+        """
+        type: charm
+    """
     )
-    assert config == ()
+    config = load(tmp_path)
+    assert config.bases is None
+
+
+def test_bases_minimal_long_form(create_config):
+    tmp_path = create_config(
+        """
+        type: charm
+        bases:
+          - build-on:
+              - name: test-build-name
+                channel: test-build-channel
+            run-on:
+              - name: test-run-name
+                channel: test-run-channel
+    """
+    )
+
+    config = load(tmp_path)
+    assert config.bases == [
+        BasesConfiguration(
+            **{
+                "build-on": [
+                    Base(
+                        name="test-build-name",
+                        channel="test-build-channel",
+                        architectures=[get_host_architecture()],
+                    ),
+                ],
+                "run-on": [
+                    Base(
+                        name="test-run-name",
+                        channel="test-run-channel",
+                        architectures=[get_host_architecture()],
+                    ),
+                ],
+            }
+        )
+    ]
+
+
+def test_bases_extra_field_error(create_config, check_schema_error):
+    create_config(
+        """
+        type: charm
+        bases:
+          - build-on:
+              - name: test-name
+                channel: test-build-channel
+                extra-extra: read all about it
+            run-on:
+              - name: test-name
+                channel: test-run-channel
+    """
+    )
+
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - extra field 'extra-extra' not permitted in 'bases[0].build-on[0]' configuration"""
+        )
+    )
+
+
+def test_bases_underscores_error(create_config, check_schema_error):
+    create_config(
+        """
+        type: charm
+        bases:
+          - build_on:
+              - name: test-name
+                channel: test-build-channel
+            run_on:
+              - name: test-name
+                channel: test-run-channel
+    """
+    )
+
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - field 'build-on' required in 'bases[0]' configuration
+            - field 'run-on' required in 'bases[0]' configuration
+            - extra field 'build_on' not permitted in 'bases[0]' configuration
+            - extra field 'run_on' not permitted in 'bases[0]' configuration"""
+        )
+    )
+
+
+def test_channel_is_yaml_number(create_config, check_schema_error):
+    create_config(
+        """
+        type: charm
+        bases:
+          - build-on:
+              - name: test-build-name
+                channel: 20.10
+            run-on:
+              - name: test-run-name
+                channel: test-run-channel
+    """
+    )
+
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - string type expected in field 'bases[0].build-on[0].channel'"""
+        )
+    )
+
+
+def test_minimal_long_form_bases(create_config):
+    tmp_path = create_config(
+        """
+        type: charm
+        bases:
+          - build-on:
+              - name: test-build-name
+                channel: test-build-channel
+            run-on:
+              - name: test-run-name
+                channel: test-run-channel
+    """
+    )
+
+    config = load(tmp_path)
+    assert config.bases == [
+        BasesConfiguration(
+            **{
+                "build-on": [
+                    Base(
+                        name="test-build-name",
+                        channel="test-build-channel",
+                        architectures=[get_host_architecture()],
+                    ),
+                ],
+                "run-on": [
+                    Base(
+                        name="test-run-name",
+                        channel="test-run-channel",
+                        architectures=[get_host_architecture()],
+                    ),
+                ],
+            }
+        )
+    ]
+
+
+def test_complex_long_form_bases(create_config):
+    tmp_path = create_config(
+        """
+        type: charm
+        bases:
+          - build-on:
+              - name: test-build-name-1
+                channel: test-build-channel-1
+              - name: test-build-name-2
+                channel: test-build-channel-2
+              - name: test-build-name-3
+                channel: test-build-channel-3
+                architectures: [riscVI]
+            run-on:
+              - name: test-run-name-1
+                channel: test-run-channel-1
+                architectures: [amd64]
+              - name: test-run-name-2
+                channel: test-run-channel-2
+                architectures: [amd64, arm64]
+              - name: test-run-name-3
+                channel: test-run-channel-3
+                architectures: [amd64, arm64, riscVI]
+    """
+    )
+
+    config = load(tmp_path)
+    assert config.bases == [
+        BasesConfiguration(
+            **{
+                "build-on": [
+                    Base(
+                        name="test-build-name-1",
+                        channel="test-build-channel-1",
+                        architectures=[get_host_architecture()],
+                    ),
+                    Base(
+                        name="test-build-name-2",
+                        channel="test-build-channel-2",
+                        architectures=[get_host_architecture()],
+                    ),
+                    Base(
+                        name="test-build-name-3",
+                        channel="test-build-channel-3",
+                        architectures=["riscVI"],
+                    ),
+                ],
+                "run-on": [
+                    Base(
+                        name="test-run-name-1",
+                        channel="test-run-channel-1",
+                        architectures=["amd64"],
+                    ),
+                    Base(
+                        name="test-run-name-2",
+                        channel="test-run-channel-2",
+                        architectures=["amd64", "arm64"],
+                    ),
+                    Base(
+                        name="test-run-name-3",
+                        channel="test-run-channel-3",
+                        architectures=["amd64", "arm64", "riscVI"],
+                    ),
+                ],
+            }
+        )
+    ]
+
+
+def test_multiple_long_form_bases(create_config):
+    tmp_path = create_config(
+        """
+        type: charm
+        bases:
+          - build-on:
+              - name: test-build-name-1
+                channel: test-build-channel-1
+            run-on:
+              - name: test-run-name-1
+                channel: test-run-channel-1
+                architectures: [amd64, arm64]
+          - build-on:
+              - name: test-build-name-2
+                channel: test-build-channel-2
+            run-on:
+              - name: test-run-name-2
+                channel: test-run-channel-2
+                architectures: [amd64, arm64]
+    """
+    )
+
+    config = load(tmp_path)
+    assert config.bases == [
+        BasesConfiguration(
+            **{
+                "build-on": [
+                    Base(
+                        name="test-build-name-1",
+                        channel="test-build-channel-1",
+                        architectures=[get_host_architecture()],
+                    ),
+                ],
+                "run-on": [
+                    Base(
+                        name="test-run-name-1",
+                        channel="test-run-channel-1",
+                        architectures=["amd64", "arm64"],
+                    ),
+                ],
+            }
+        ),
+        BasesConfiguration(
+            **{
+                "build-on": [
+                    Base(
+                        name="test-build-name-2",
+                        channel="test-build-channel-2",
+                        architectures=[get_host_architecture()],
+                    ),
+                ],
+                "run-on": [
+                    Base(
+                        name="test-run-name-2",
+                        channel="test-run-channel-2",
+                        architectures=["amd64", "arm64"],
+                    ),
+                ],
+            }
+        ),
+    ]
+
+
+def test_bases_minimal_short_form(create_config):
+    tmp_path = create_config(
+        """
+        type: charm
+        bases:
+          - name: test-name
+            channel: test-channel
+    """
+    )
+
+    config = load(tmp_path)
+    assert config.bases == [
+        BasesConfiguration(
+            **{
+                "build-on": [
+                    Base(
+                        name="test-name",
+                        channel="test-channel",
+                        architectures=[get_host_architecture()],
+                    ),
+                ],
+                "run-on": [
+                    Base(
+                        name="test-name",
+                        channel="test-channel",
+                        architectures=[get_host_architecture()],
+                    ),
+                ],
+            }
+        )
+    ]
+
+
+def test_bases_short_form_extra_field_error(create_config, check_schema_error):
+    create_config(
+        """
+        type: charm
+        bases:
+          - name: test-name
+            channel: test-channel
+            extra-extra: read all about it
+    """
+    )
+
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - extra field 'extra-extra' not permitted in 'bases[0]' configuration"""
+        )
+    )
+
+
+def test_bases_short_form_missing_field_error(create_config, check_schema_error):
+    create_config(
+        """
+        type: charm
+        bases:
+          - name: test-name
+    """
+    )
+
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - field 'channel' required in 'bases[0]' configuration"""
+        )
+    )
+
+
+def test_bases_mixed_form_errors(create_config, check_schema_error):
+    """Only the short-form errors are exposed as its the first validation pass."""
+    create_config(
+        """
+        type: charm
+        bases:
+          - name: test-name
+          - build-on:
+              - name: test-build-name
+            run-on:
+              - name: test-run-name
+    """
+    )
+
+    check_schema_error(
+        dedent(
+            """\
+            Bad charmcraft.yaml content:
+            - field 'channel' required in 'bases[0]' configuration"""
+        )
+    )

@@ -18,6 +18,7 @@
 
 import ast
 import hashlib
+import json
 import logging
 import pathlib
 import string
@@ -40,7 +41,7 @@ from charmcraft.utils import (
 )
 
 from .store import Store
-from .registry import ImageHandler, OCIRegistry
+from .registry import ImageHandler
 
 logger = logging.getLogger("charmcraft.commands.store")
 
@@ -1310,17 +1311,12 @@ class UploadResourceCommand(BaseCommand):
 
         Push a resource content to Charmhub, associating it to the
         specified charm. This charm needs to have the resource declared
-        in its metadata (in a preoviously uploaded to Charmhub revision).
+        in its metadata (in a previously uploaded to Charmhub revision).
 
         The resource can be a file from your computer (use the '--filepath'
-        option) or an OCI Image (use the '--image' option, including a
-        '--registry' indication if needed, for example use
-        'https://registry.hub.docker.com' for DockerHub, the default is
-        Canonical's registry).
+        option) or an OCI Image (use the '--image' option to indicate the
+        image digest).
 
-        The OCI image description uses the name[:tag|@digest] form. The
-        name is mandatory but the reference (a digest or a tag) is
-        optional, defaulting to 'latest'.
 
         Upload will take you through login if needed.
     """
@@ -1346,7 +1342,7 @@ class UploadResourceCommand(BaseCommand):
         group.add_argument(
             "--image",
             type=SingleOptionEnsurer(str),
-            help="The digest of the local OCI image",
+            help="The digest of the OCI image",
         )
 
     def run(self, parsed_args):

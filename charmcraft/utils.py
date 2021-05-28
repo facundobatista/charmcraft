@@ -147,7 +147,7 @@ def useful_filepath(filepath):
     CommandError is raised if filepath is not a valid file or is not readable.
     """
     filepath = pathlib.Path(filepath).expanduser()
-    if not os.access(str(filepath), os.R_OK):  # access doesn't support pathlib in 3.5
+    if not os.access(filepath, os.R_OK):
         raise CommandError("Cannot access {!r}.".format(str(filepath)))
     if not filepath.is_file():
         raise CommandError("{!r} is not a file.".format(str(filepath)))
@@ -182,6 +182,12 @@ def get_os_platform(filepath=pathlib.Path("/etc/os-release")):
     return OSPlatform(system=system, release=release, machine=machine)
 
 
+def get_host_architecture():
+    """Get host architecture in deb format suitable for base definition."""
+    os_platform = get_os_platform()
+    return ARCH_TRANSLATIONS.get(os_platform.machine, os_platform.machine)
+
+
 def create_manifest(basedir, started_at):
     """Save context information for the charm execution.
 
@@ -191,7 +197,7 @@ def create_manifest(basedir, started_at):
 
     # XXX Facundo 2021-03-29: the architectures list will be provided by the caller when
     # we integrate lifecycle lib in future branches
-    architectures = [ARCH_TRANSLATIONS.get(os_platform.machine, os_platform.machine)]
+    architectures = [get_host_architecture()]
 
     # XXX Facundo 2021-04-19: these are temporary translations until charmcraft
     # changes to be a "classic" snap

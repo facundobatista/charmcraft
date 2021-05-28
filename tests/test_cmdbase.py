@@ -58,13 +58,8 @@ def test_basecommand_holds_the_indicated_info():
     assert tc.config == config
 
 
-def test_basecommand_optional_methods():
-    """BaseCommand subclasses are allowed to not override the optional methods.
-
-    Current optional methods:
-    - fill_parser
-    - parsed_args_post_verification
-    """
+def test_basecommand_fill_parser_optional():
+    """BaseCommand subclasses are allowed to not override fill_parser."""
 
     class TestClass(BaseCommand):
         help_msg = "help message"

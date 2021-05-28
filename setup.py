@@ -28,8 +28,35 @@ import charmcraft
 with open("README.md", "rt", encoding="utf8") as fh:
     long_description = fh.read()
 
-with open("requirements.txt", "rt", encoding="utf8") as fh:
-    requirements = fh.read().split("\n")
+install_requires = [
+    "appdirs",
+    "attrs",
+    "humanize>=2.6.0",
+    "jsonschema",
+    "jinja2",
+    "macaroonbakery",
+    "pydantic",
+    "python-dateutil",
+    "pyyaml",
+    "requests",
+    "requests-toolbelt",
+    "tabulate",
+]
+#FIXME: add new req
+
+dev_requires = [
+    "black",
+    "coverage",
+    "flake8",
+    "ops>=0.8.0",
+    "pydocstyle",
+    "pytest",
+    "responses",
+]
+
+extras_require = {
+    "dev": dev_requires,
+}
 
 version_path = Path("charmcraft/version.py")
 version_backup = Path("charmcraft/version.py~")
@@ -67,7 +94,8 @@ try:
             "console_scripts": ["charmcraft = charmcraft.main:main"],
         },
         python_requires=">=3",
-        install_requires=requirements,
+        install_requires=install_requires,
+        extras_require=extras_require,
         include_package_data=True,  # so we get templates in the wheel
     )
 

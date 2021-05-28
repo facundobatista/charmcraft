@@ -55,13 +55,16 @@ HOOKS_DIR = "hooks"
 
 def _pip_needs_system():
     """Determine whether pip3 defaults to --user, needing --system to turn it off."""
-    try:
-        from pip.commands.install import InstallCommand
-
-        return InstallCommand().cmd_opts.get_option("--system") is not None
-    except (ImportError, AttributeError, TypeError):
-        # probably not the bionic pip version then
-        return False
+    cmd = [
+        "python3",
+        "-c",
+        (
+            "from pip.commands.install import InstallCommand; "
+            'assert InstallCommand().cmd_opts.get_option("--system") is not None'
+        ),
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return proc.returncode == 0
 
 
 def polite_exec(cmd):
@@ -289,8 +292,7 @@ class Builder:
         logger.debug("Creating the package itself")
         zipname = metadata["name"] + ".charm"
         zipfh = zipfile.ZipFile(zipname, "w", zipfile.ZIP_DEFLATED)
-        buildpath_str = str(self.buildpath)  # os.walk does not support pathlib in 3.5
-        for dirpath, dirnames, filenames in os.walk(buildpath_str, followlinks=True):
+        for dirpath, dirnames, filenames in os.walk(self.buildpath, followlinks=True):
             dirpath = pathlib.Path(dirpath)
             for filename in filenames:
                 filepath = dirpath / filename
@@ -356,9 +358,7 @@ class Validator:
                     str(filepath)
                 )
             )
-        if not os.access(
-            str(filepath), os.X_OK
-        ):  # access does not support pathlib in 3.5
+        if not os.access(filepath, os.X_OK):
             raise CommandError(
                 "Charm entry point must be executable: {!r}".format(str(filepath))
             )
@@ -371,9 +371,7 @@ class Validator:
         """
         if filepaths is None:
             req = self.basedir / "requirements.txt"
-            if req.exists() and os.access(
-                str(req), os.R_OK
-            ):  # access doesn't support pathlib 3.5
+            if req.exists() and os.access(req, os.R_OK):
                 return [req]
             return []
 

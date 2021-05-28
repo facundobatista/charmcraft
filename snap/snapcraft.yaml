@@ -50,16 +50,9 @@ architectures:
 
 apps:
   charmcraft:
-    command: bin/charmcraft
+    command: bin/python3 $SNAP/bin/charmcraft
     completer: completion.bash
-    plugs:
-      - home            # so it can acess files under the user's home
-      - removable-media # so it can access things in /media, etc. (manually connected)
-      - network         # so 'pip install' can download things
-      - desktop         # so the right default browser can be used
     environment:
-      # help python pick up useful things from the base snap
-      PYTHONPATH: /usr/lib/python3/dist-packages:$SNAP/lib
       # have the cache outside of the version dirs (avoids keeping N copies)
       XDG_CACHE_HOME: $SNAP_USER_COMMON/cache
       # same for config
@@ -71,12 +64,36 @@ apps:
       GIT_EXEC_PATH: $SNAP/git/git-core
 
 grade: stable
-confinement: strict
+confinement: classic
 
 parts:
+  # Classic core20 snaps require staged python.
+  python3:
+    plugin: nil
+    build-packages:
+      - python3-dev
+    stage-packages:
+      - libpython3-stdlib
+      - libpython3.8-minimal
+      - libpython3.8-stdlib
+      - python3.8-minimal
+      - python3-distutils
+      - python3-minimal
+      - python3-pkg-resources
+      - python3-pip
+      - python3-setuptools
+      - python3-venv
+      - python3-wheel
+    override-build: |
+      snapcraftctl build
+      install -D -m 0755 $SNAPCRAFT_PROJECT_DIR/snap/local/sitecustomize.py $SNAPCRAFT_PART_INSTALL/usr/lib/python3.8/sitecustomize.py
+
   charmcraft:
+    after: [python3]
     source: .
     plugin: python
+    requirements:
+      - requirements.txt
     build-packages:
       - libffi-dev
     stage-packages:
@@ -84,6 +101,9 @@ parts:
     # snapcraft uses venv, which doesn't pull in wheel (as opposed to virtualenv)
     # so then 'pip install PyYAML' gets cross.
     python-packages: [wheel]
+    build-environment:
+      - LDFLAGS: -L/usr/lib/python3.8
+      - CPPFLAGS: -I/usr/include/python3.8
     override-pull: |
       # do the usual pull stuff
       snapcraftctl pull
@@ -93,6 +113,8 @@ parts:
       snapcraftctl build
       # why is this needed?
       cp -v completion.bash ../install
+      # python3 fixup symlink (snapcraft bug)
+      ln -sf ../usr/bin/python3.8 $SNAPCRAFT_PART_INSTALL/bin/python3
     organize:
       # move things around so they're tidier
       usr/lib/git-core: git/git-core
@@ -121,10 +143,20 @@ parts:
       - lib/appdirs-*.dist-info
       - lib/attr
       - lib/attrs-*.dist-info
+      - lib/certifi
+      - lib/certifi-*.dist-info
+      - lib/chardet
+      - lib/chardet-*.dist-info
+      - lib/_cffi_backend.*.so
+      - lib/cffi.libs
+      - lib/idna
+      - lib/idna-*.dist-info
       - lib/jsonschema
       - lib/jsonschema-*.dist-info
       - lib/macaroonbakery
       - lib/macaroonbakery-*.dist-info
+      - lib/pydantic
+      - lib/pydantic-*.dist-info
       - lib/pyrfc3339
       - lib/pyRFC3339-*.dist-info
       - lib/pytz
@@ -136,14 +168,26 @@ parts:
       - lib/google
       - lib/humanize
       - lib/humanize-*.dist-info
+      - lib/jinja2
+      - lib/markupsafe
       - lib/protobuf-*.pth
       - lib/protobuf-*.dist-info
+      - lib/pyrsistent
+      - lib/pyrsistent-*.dist-info
+      - lib/requests
+      - lib/six.py
+      - lib/six-*.dist-info
       - lib/tabulate.py
       - lib/tabulate-*.dist-info
+      - lib/urllib3
+      - lib/urllib3-*.dist-info
       - lib/dateutil
       - lib/python_dateutil-*.dist-info
       - lib/requests_toolbelt
       - lib/requests_toolbelt-*.dist-info
+      - lib/typing_extensions.py
+      - lib/typing_extensions-*.dist-info
+      - lib/yaml
       # this effectively means we're shipping pip and wheel twice (once above,
       # and once below), but untangling that is probably not worth it.
       - share/python-wheels
