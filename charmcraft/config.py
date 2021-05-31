@@ -211,8 +211,14 @@ class Parts(ModelConfigDefaults):
         raise KeyError(part_name)
 
 
+# XXX Facundo 2020-05-31: for backwards compatibility, we'll support the user writing
+# these attributes using underscores; when that period is done we remove the
+# `allow_population_by_field_name` parameter here in the class definition and only
+# regular dashes will be allowed.
 class CharmhubConfig(
-    ModelConfigDefaults, alias_generator=lambda s: s.replace("_", "-")
+    ModelConfigDefaults,
+    alias_generator=lambda s: s.replace("_", "-"),
+    allow_population_by_field_name=True,
 ):
     """Definition of Charmhub endpoint configuration."""
 
