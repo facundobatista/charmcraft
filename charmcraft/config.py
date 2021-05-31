@@ -367,9 +367,9 @@ def load(dirpath):
             ),
         )
 
-    if any('_' in x for x in content.get('charmhub', {}).keys()):
+    if any("_" in x for x in content.get("charmhub", {}).keys()):
         # underscores in config attribs deprecated on 2021-05-31
-        notify_deprecation('dn01')
+        notify_deprecation("dn01")
     return Config.unmarshal(
         content,
         project=Project(
