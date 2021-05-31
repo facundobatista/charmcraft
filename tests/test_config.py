@@ -15,6 +15,7 @@
 # For further info, check https://github.com/canonical/charmcraft
 
 import datetime
+import logging
 import os
 from textwrap import dedent
 from unittest.mock import patch
@@ -473,8 +474,10 @@ def test_charmhub_frozen():
         config.api_url = "broken"
 
 
-def test_charmhub_underscore_backwards_compatibility(create_config, tmp_path):
+def test_charmhub_underscore_backwards_compatibility(create_config, tmp_path, caplog):
     """Support underscore in these attributes for a while."""
+    caplog.set_level(logging.WARNING, logger="charmcraft")
+
     create_config(
         """
         type: charm  # mandatory
@@ -488,6 +491,8 @@ def test_charmhub_underscore_backwards_compatibility(create_config, tmp_path):
     assert cfg.charmhub.storage_url == "https://server1.com"
     assert cfg.charmhub.api_url == "https://server2.com"
     assert cfg.charmhub.registry_url == "https://server3.com"
+    deprecation_msg = "DEPRECATED: Configuration keywords are now separated using dashes."
+    assert deprecation_msg in [rec.message for rec in caplog.records]
 
 
 # -- tests for BasicPrime config

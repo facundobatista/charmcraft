@@ -62,6 +62,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pydantic
 
 from charmcraft.cmdbase import CommandError
+from charmcraft.deprecations import notify_deprecation
 from charmcraft.utils import get_host_architecture, load_yaml
 
 
@@ -366,12 +367,14 @@ def load(dirpath):
             ),
         )
 
-    else:
-        return Config.unmarshal(
-            content,
-            project=Project(
-                dirpath=dirpath,
-                config_provided=True,
-                started_at=now,
-            ),
-        )
+    if any('_' in x for x in content.get('charmhub', {}).keys()):
+        # underscores in config attribs deprecated on 2021-05-31
+        notify_deprecation('dn01')
+    return Config.unmarshal(
+        content,
+        project=Project(
+            dirpath=dirpath,
+            config_provided=True,
+            started_at=now,
+        ),
+    )
